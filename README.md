@@ -16,9 +16,11 @@
 
 - Domain Modeling
 - Aggregate Design
-- ERD
-  <img width="683" height="877" alt="image" src="https://github.com/user-attachments/assets/e14998f7-1fa6-4ef0-ad5d-977fce3f49dd" />
-- Database Specification [Notion DB 명세서](https://app.notion.com/p/DB-3af600a70787801db793ec180670d631?source=copy_link)
+---
+## DB/ERD
+
+<img width="683" height="877" alt="image" src="https://github.com/user-attachments/assets/e14998f7-1fa6-4ef0-ad5d-977fce3f49dd" />
+- DB 명세서: [Notion DB 명세서](https://app.notion.com/p/DB-3af600a70787801db793ec180670d631?source=copy_link)
 
 ---
 
