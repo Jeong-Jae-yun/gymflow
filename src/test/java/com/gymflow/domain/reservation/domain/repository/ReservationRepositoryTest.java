@@ -2,6 +2,7 @@ package com.gymflow.domain.reservation.domain.repository;
 
 import com.gymflow.TestcontainersConfiguration;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
+import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
@@ -73,6 +74,33 @@ class ReservationRepositoryTest {
         assertThat(saved).hasSize(2);
         assertThat(saved).extracting(Reservation::getReservationBatchId)
                 .containsExactly(batchId, batchId);
+    }
+
+    @Test
+    @DisplayName("예약을 취소하면 status와 cancelReason이 실제 DB에 저장된다")
+    void cancel_ShouldPersistStatusAndCancelReason() {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 10, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 10, 30))
+                .build();
+        Reservation saved = reservationRepository.save(reservation);
+        entityManager.flush();
+
+        // when
+        saved.cancel(CancelReason.SCHEDULE_CHANGE);
+        entityManager.flush();
+        entityManager.clear();
+
+        // then
+        Reservation reloaded = reservationRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reloaded.getCancelReason()).isEqualTo(CancelReason.SCHEDULE_CHANGE);
     }
 
     @Test

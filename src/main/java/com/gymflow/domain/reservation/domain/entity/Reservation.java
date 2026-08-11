@@ -1,5 +1,6 @@
 package com.gymflow.domain.reservation.domain.entity;
 
+import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.user.domain.entity.User;
@@ -55,6 +56,10 @@ public class Reservation extends BaseEntity {
     @Column(name = "status", nullable = false)
     private ReservationStatus status;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cancel_reason")
+    private CancelReason cancelReason;
+
     @Builder
     public Reservation(UUID reservationBatchId, User user, Resource resource, LocalDateTime startAt, LocalDateTime endAt) {
         validateUser(user);
@@ -98,5 +103,17 @@ public class Reservation extends BaseEntity {
         if (!startAt.isBefore(endAt)) {
             throw new IllegalArgumentException("startAt은 endAt보다 이전이어야 합니다.");
         }
+    }
+
+    public void cancel(CancelReason cancelReason) {
+        if (status != ReservationStatus.CONFIRMED) {
+            throw new IllegalStateException("CONFIRMED 상태의 예약만 취소할 수 있습니다.");
+        }
+        if (cancelReason == null) {
+            throw new IllegalArgumentException("취소 사유는 필수입니다.");
+        }
+
+        this.status = ReservationStatus.CANCELLED;
+        this.cancelReason = cancelReason;
     }
 }

@@ -1,11 +1,15 @@
 package com.gymflow.domain.reservation.domain.entity;
 
+import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.user.domain.entity.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -243,5 +247,68 @@ class ReservationTest {
         // then
         assertThat(first.getReservationBatchId()).isEqualTo(batchId);
         assertThat(second.getReservationBatchId()).isEqualTo(batchId);
+    }
+
+    private Reservation confirmedReservation() {
+        return Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(createUser())
+                .resource(createResource())
+                .startAt(LocalDateTime.of(2026, 8, 12, 10, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 10, 15))
+                .build();
+    }
+
+    @Test
+    @DisplayName("CONFIRMED 상태의 Reservation은 취소하면 CANCELLED 상태가 되고 cancelReason이 저장된다")
+    void cancel_WithConfirmedReservation_ShouldChangeStatusAndStoreCancelReason() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when
+        reservation.cancel(CancelReason.SCHEDULE_CHANGE);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reservation.getCancelReason()).isEqualTo(CancelReason.SCHEDULE_CHANGE);
+    }
+
+    @Test
+    @DisplayName("취소되지 않은 Reservation의 cancelReason은 null이다")
+    void cancelReason_WhenNotCancelled_ShouldBeNull() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // then
+        assertThat(reservation.getCancelReason()).isNull();
+    }
+
+    @Test
+    @DisplayName("cancelReason이 null이면 취소에 실패한다")
+    void cancel_WithNullCancelReason_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when & then
+        assertThatThrownBy(() -> reservation.cancel(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("취소 사유");
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("CONFIRMED가 아닌 상태의 Reservation은 취소할 수 없다")
+    void cancel_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", status);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.cancel(CancelReason.OTHER))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(status);
+        assertThat(reservation.getCancelReason()).isNull();
     }
 }

@@ -1,6 +1,8 @@
 package com.gymflow.domain.reservation.controller;
 
+import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
+import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.reservation.service.ReservationService;
 import com.gymflow.global.common.exception.BusinessException;
@@ -12,8 +14,10 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -32,6 +37,9 @@ class ReservationControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @MockitoBean
     private ReservationService reservationService;
@@ -43,7 +51,20 @@ class ReservationControllerTest {
                 10L,
                 LocalDateTime.of(2026, 8, 12, 10, 0),
                 LocalDateTime.of(2026, 8, 12, 10, 30),
-                ReservationStatus.CONFIRMED
+                ReservationStatus.CONFIRMED,
+                null
+        );
+    }
+
+    private ReservationResponse cancelledResponse() {
+        return new ReservationResponse(
+                UUID.randomUUID(),
+                100L,
+                10L,
+                LocalDateTime.of(2026, 8, 12, 10, 0),
+                LocalDateTime.of(2026, 8, 12, 10, 30),
+                ReservationStatus.CANCELLED,
+                CancelReason.SCHEDULE_CHANGE
         );
     }
 
@@ -88,6 +109,60 @@ class ReservationControllerTest {
 
         // when & then
         mockMvc.perform(get("/api/reservations/{reservationId}", 999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_FOUND.getMessage()));
+    }
+
+    @Test
+    @DisplayName("정상적인 취소 요청은 200 OK와 취소된 ReservationResponse를 반환한다")
+    void cancel_WithValidRequest_ShouldReturnOk() throws Exception {
+        // given
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.SCHEDULE_CHANGE);
+        when(reservationService.cancelReservation(any(Long.class), any(CancelReservationRequest.class)))
+                .thenReturn(cancelledResponse());
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/cancel", 100L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(100L))
+                .andExpect(jsonPath("$.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.cancelReason").value("SCHEDULE_CHANGE"));
+    }
+
+    @Test
+    @DisplayName("cancelReason이 없으면 400 Bad Request를 반환한다")
+    void cancel_WithMissingCancelReason_ShouldReturnBadRequest() throws Exception {
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/cancel", 100L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("잘못된 형식의 cancelReason이면 400 Bad Request를 반환한다")
+    void cancel_WithInvalidCancelReasonFormat_ShouldReturnBadRequest() throws Exception {
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/cancel", 100L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"cancelReason\": \"NOT_A_REAL_REASON\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("취소 대상 예약이 없으면 404 Not Found를 반환한다")
+    void cancel_WithNonExistentReservation_ShouldReturnNotFound() throws Exception {
+        // given
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.SCHEDULE_CHANGE);
+        when(reservationService.cancelReservation(any(Long.class), any(CancelReservationRequest.class)))
+                .thenThrow(new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/cancel", 999L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_FOUND.getMessage()));
     }

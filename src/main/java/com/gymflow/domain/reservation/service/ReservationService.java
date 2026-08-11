@@ -3,6 +3,7 @@ package com.gymflow.domain.reservation.service;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
+import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.reservation.mapper.ReservationMapper;
@@ -90,6 +91,22 @@ public class ReservationService {
 
         Reservation reservation = reservationRepository.findByIdAndUserId(reservationId, currentUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        return ReservationMapper.toResponse(reservation);
+    }
+
+    @Transactional
+    public ReservationResponse cancelReservation(Long reservationId, CancelReservationRequest request) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        Reservation reservation = reservationRepository.findByIdAndUserId(reservationId, currentUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        if (reservation.getStatus() != ReservationStatus.CONFIRMED) {
+            throw new BusinessException(ErrorCode.RESERVATION_NOT_CANCELLABLE);
+        }
+
+        reservation.cancel(request.cancelReason());
 
         return ReservationMapper.toResponse(reservation);
     }

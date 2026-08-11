@@ -1,5 +1,6 @@
 package com.gymflow.domain.reservation.dto.response;
 
+import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 
 import java.time.LocalDateTime;
@@ -11,6 +12,7 @@ public record ReservationResponse(
         Long resourceId,
         LocalDateTime startAt,
         LocalDateTime endAt,
-        ReservationStatus status
+        ReservationStatus status,
+        CancelReason cancelReason
 ) {
 }

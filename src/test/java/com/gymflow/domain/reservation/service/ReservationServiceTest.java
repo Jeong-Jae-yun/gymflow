@@ -1,8 +1,10 @@
 package com.gymflow.domain.reservation.service;
 
 import com.gymflow.domain.reservation.domain.entity.Reservation;
+import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
+import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
@@ -21,6 +23,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -383,5 +387,117 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.getMyReservationDetail(200L))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("CONFIRMED 상태의 예약은 정상적으로 취소된다")
+    void cancelReservation_WithConfirmedReservation_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.SCHEDULE_CHANGE);
+
+        // when
+        ReservationResponse response = reservationService.cancelReservation(100L, request);
+
+        // then
+        assertThat(response.reservationId()).isEqualTo(100L);
+        assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(response.cancelReason()).isEqualTo(CancelReason.SCHEDULE_CHANGE);
+    }
+
+    @Test
+    @DisplayName("취소 후 Reservation의 status는 CANCELLED로 변경된다")
+    void cancelReservation_ShouldChangeStatusToCancelled() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when
+        reservationService.cancelReservation(100L, new CancelReservationRequest(CancelReason.PERSONAL_REASON));
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+    }
+
+    @Test
+    @DisplayName("취소 후 cancelReason이 저장된다")
+    void cancelReservation_ShouldStoreCancelReason() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when
+        reservationService.cancelReservation(100L, new CancelReservationRequest(CancelReason.WRONG_RESERVATION));
+
+        // then
+        assertThat(reservation.getCancelReason()).isEqualTo(CancelReason.WRONG_RESERVATION);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 예약을 취소하면 예외가 발생한다")
+    void cancelReservation_WithNonExistentReservation_ShouldThrowException() {
+        // given
+        when(reservationRepository.findByIdAndUserId(999L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.OTHER);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.cancelReservation(999L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 예약을 취소하면 예외가 발생한다")
+    void cancelReservation_WithOtherUsersReservation_ShouldThrowException() {
+        // given
+        // findByIdAndUserId가 이미 소유자 기준으로 필터링하므로 타인의 예약은 조회되지 않는다
+        when(reservationRepository.findByIdAndUserId(200L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.OTHER);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.cancelReservation(200L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("CONFIRMED가 아닌 상태의 예약은 취소할 수 없다")
+    void cancelReservation_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", status);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.OTHER);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.cancelReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_CANCELLABLE);
+    }
+
+    @Test
+    @DisplayName("cancelReason이 null이면 취소에 실패한다")
+    void cancelReservation_WithNullCancelReason_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        CancelReservationRequest request = new CancelReservationRequest(null);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.cancelReservation(100L, request))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

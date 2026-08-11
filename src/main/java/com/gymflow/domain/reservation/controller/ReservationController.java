@@ -1,5 +1,6 @@
 package com.gymflow.domain.reservation.controller;
 
+import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.reservation.service.ReservationService;
@@ -12,6 +13,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -41,6 +43,13 @@ public class ReservationController {
     @GetMapping("/{reservationId}")
     public ResponseEntity<ReservationResponse> getMyReservationDetail(@PathVariable Long reservationId) {
         ReservationResponse response = reservationService.getMyReservationDetail(reservationId);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{reservationId}/cancel")
+    public ResponseEntity<ReservationResponse> cancel(
+            @PathVariable Long reservationId, @Valid @RequestBody CancelReservationRequest request) {
+        ReservationResponse response = reservationService.cancelReservation(reservationId, request);
         return ResponseEntity.ok(response);
     }
 }
