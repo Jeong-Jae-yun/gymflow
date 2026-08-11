@@ -43,7 +43,7 @@ class SecurityIntegrationTest {
                 "name", "John Doe"
         );
 
-        mockMvc.perform(post("/api/v1/users/signup")
+        mockMvc.perform(post("/api/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated());
@@ -57,7 +57,7 @@ class SecurityIntegrationTest {
                 "password", "securePassword123"
         );
 
-        mockMvc.perform(post("/api/v1/auth/login")
+        mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isUnauthorized());
@@ -66,7 +66,7 @@ class SecurityIntegrationTest {
     @Test
     @DisplayName("인증이 필요한 API에 토큰 없이 접근하면 401을 반환한다")
     void accessProtectedApi_WithoutToken_ShouldReturnUnauthorized() throws Exception {
-        mockMvc.perform(get("/api/v1/test/authenticated"))
+        mockMvc.perform(get("/api/test/authenticated"))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -75,7 +75,7 @@ class SecurityIntegrationTest {
     void accessProtectedApi_WithValidToken_ShouldBeAccessible() throws Exception {
         String token = jwtTokenProvider.createAccessToken(1L, "test@gymflow.com", UserRole.USER);
 
-        mockMvc.perform(get("/api/v1/test/authenticated")
+        mockMvc.perform(get("/api/test/authenticated")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
     }
@@ -85,7 +85,7 @@ class SecurityIntegrationTest {
     void accessAdminApi_WithUserRole_ShouldReturnForbidden() throws Exception {
         String token = jwtTokenProvider.createAccessToken(1L, "user@gymflow.com", UserRole.USER);
 
-        mockMvc.perform(get("/api/v1/test/admin")
+        mockMvc.perform(get("/api/test/admin")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isForbidden());
     }
@@ -95,7 +95,7 @@ class SecurityIntegrationTest {
     void accessAdminApi_WithAdminRole_ShouldBeAccessible() throws Exception {
         String token = jwtTokenProvider.createAccessToken(2L, "admin@gymflow.com", UserRole.ADMIN);
 
-        mockMvc.perform(get("/api/v1/test/admin")
+        mockMvc.perform(get("/api/test/admin")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
     }

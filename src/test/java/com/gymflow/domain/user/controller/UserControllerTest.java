@@ -50,7 +50,7 @@ class UserControllerTest {
         when(userService.signUp(any(UserSignUpRequest.class))).thenReturn(response);
 
         // when & then
-        mockMvc.perform(post("/api/v1/users/signup")
+        mockMvc.perform(post("/api/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -73,7 +73,7 @@ class UserControllerTest {
                 """;
 
         // when & then
-        mockMvc.perform(post("/api/v1/users/signup")
+        mockMvc.perform(post("/api/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidRequestJson))
                 .andExpect(status().isBadRequest());
@@ -90,7 +90,7 @@ class UserControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.DUPLICATE_EMAIL));
 
         // when & then
-        mockMvc.perform(post("/api/v1/users/signup")
+        mockMvc.perform(post("/api/users/signup")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isConflict())

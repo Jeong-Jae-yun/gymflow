@@ -22,8 +22,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private static final String[] PUBLIC_ENDPOINTS = {
-            "/api/v1/users/signup",
-            "/api/v1/auth/login"
+            "/api/users/signup",
+            "/api/auth/login"
     };
 
     private final JwtTokenProvider jwtTokenProvider;

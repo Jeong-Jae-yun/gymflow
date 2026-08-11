@@ -43,7 +43,7 @@ class AuthControllerTest {
         when(authService.login(any(LoginRequest.class))).thenReturn(response);
 
         // when & then
-        mockMvc.perform(post("/api/v1/auth/login")
+        mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
@@ -60,7 +60,7 @@ class AuthControllerTest {
                 """;
 
         // when & then
-        mockMvc.perform(post("/api/v1/auth/login")
+        mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidRequestJson))
                 .andExpect(status().isBadRequest());
@@ -75,7 +75,7 @@ class AuthControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.INVALID_CREDENTIALS));
 
         // when & then
-        mockMvc.perform(post("/api/v1/auth/login")
+        mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isUnauthorized());

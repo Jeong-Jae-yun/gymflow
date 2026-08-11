@@ -8,12 +8,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class TestSecuredController {
 
-    @GetMapping("/api/v1/test/authenticated")
+    @GetMapping("/api/test/authenticated")
     public String authenticatedOnly() {
         return "ok";
     }
 
-    @GetMapping("/api/v1/test/admin")
+    @GetMapping("/api/test/admin")
     @PreAuthorize("hasRole('ADMIN')")
     public String adminOnly() {
         return "ok";
