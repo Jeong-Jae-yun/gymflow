@@ -13,9 +13,13 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -127,9 +131,183 @@ class ReservationRepositoryTest {
         assertThat(overlaps).isFalse();
     }
 
+    @Test
+    @DisplayName("findAllByUserId는 현재 사용자의 예약만 조회한다")
+    void findAllByUserId_ShouldReturnOnlyThatUsersReservations() {
+        // given
+        User owner = persistUser("owner@gymflow.com");
+        User other = persistUser("other@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+
+        Reservation ownerReservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(owner)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 10, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 10, 30))
+                .build();
+        Reservation otherReservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(other)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 11, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 11, 30))
+                .build();
+        reservationRepository.save(ownerReservation);
+        reservationRepository.save(otherReservation);
+        entityManager.flush();
+
+        // when
+        Page<Reservation> page = reservationRepository.findAllByUserId(owner.getId(), PageRequest.of(0, 10));
+
+        // then
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getContent().get(0).getUser().getId()).isEqualTo(owner.getId());
+    }
+
+    @Test
+    @DisplayName("findAllByUserId는 Pageable에 따라 페이징된 결과를 반환한다")
+    void findAllByUserId_ShouldSupportPaging() {
+        // given
+        User owner = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+
+        for (int i = 0; i < 3; i++) {
+            Reservation reservation = Reservation.builder()
+                    .reservationBatchId(UUID.randomUUID())
+                    .user(owner)
+                    .resource(resource)
+                    .startAt(LocalDateTime.of(2026, 8, 12, 9 + i, 0))
+                    .endAt(LocalDateTime.of(2026, 8, 12, 9 + i, 30))
+                    .build();
+            reservationRepository.save(reservation);
+        }
+        entityManager.flush();
+
+        // when
+        Page<Reservation> page = reservationRepository.findAllByUserId(owner.getId(), PageRequest.of(0, 2));
+
+        // then
+        assertThat(page.getContent()).hasSize(2);
+        assertThat(page.getTotalElements()).isEqualTo(3);
+        assertThat(page.getTotalPages()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("findAllByUserId는 상태와 무관하게 사용자의 모든 예약을 조회한다")
+    void findAllByUserId_ShouldReturnReservationsOfVariousStatuses() {
+        // given
+        User owner = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+
+        Reservation confirmed = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(owner)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 9, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 9, 30))
+                .build();
+
+        Reservation completed = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(owner)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 10, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 10, 30))
+                .build();
+        ReflectionTestUtils.setField(completed, "status", ReservationStatus.COMPLETED);
+
+        Reservation cancelled = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(owner)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 11, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 11, 30))
+                .build();
+        ReflectionTestUtils.setField(cancelled, "status", ReservationStatus.CANCELLED);
+
+        reservationRepository.save(confirmed);
+        reservationRepository.save(completed);
+        reservationRepository.save(cancelled);
+        entityManager.flush();
+
+        // when
+        Page<Reservation> page = reservationRepository.findAllByUserId(owner.getId(), PageRequest.of(0, 10));
+
+        // then
+        assertThat(page.getContent()).extracting(Reservation::getStatus)
+                .containsExactlyInAnyOrder(
+                        ReservationStatus.CONFIRMED, ReservationStatus.COMPLETED, ReservationStatus.CANCELLED);
+    }
+
+    @Test
+    @DisplayName("findByIdAndUserId는 본인 소유의 예약을 조회한다")
+    void findByIdAndUserId_WithOwner_ShouldReturnReservation() {
+        // given
+        User owner = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(owner)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 9, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 9, 30))
+                .build();
+        Reservation saved = reservationRepository.save(reservation);
+        entityManager.flush();
+
+        // when
+        Optional<Reservation> found = reservationRepository.findByIdAndUserId(saved.getId(), owner.getId());
+
+        // then
+        assertThat(found).isPresent();
+        assertThat(found.get().getId()).isEqualTo(saved.getId());
+    }
+
+    @Test
+    @DisplayName("findByIdAndUserId는 다른 사용자의 예약을 조회하면 빈 값을 반환한다")
+    void findByIdAndUserId_WithOtherUser_ShouldReturnEmpty() {
+        // given
+        User owner = persistUser("owner@gymflow.com");
+        User other = persistUser("other@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(owner)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 9, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 9, 30))
+                .build();
+        Reservation saved = reservationRepository.save(reservation);
+        entityManager.flush();
+
+        // when
+        Optional<Reservation> found = reservationRepository.findByIdAndUserId(saved.getId(), other.getId());
+
+        // then
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findByIdAndUserId는 존재하지 않는 예약이면 빈 값을 반환한다")
+    void findByIdAndUserId_WithNonExistentId_ShouldReturnEmpty() {
+        // given
+        User owner = persistUser("owner@gymflow.com");
+
+        // when
+        Optional<Reservation> found = reservationRepository.findByIdAndUserId(999_999L, owner.getId());
+
+        // then
+        assertThat(found).isEmpty();
+    }
+
     private User persistUser() {
+        return persistUser("batch-test@gymflow.com");
+    }
+
+    private User persistUser(String email) {
         User user = User.builder()
-                .email("batch-test@gymflow.com")
+                .email(email)
                 .password("securePassword123")
                 .name("Batch Tester")
                 .build();

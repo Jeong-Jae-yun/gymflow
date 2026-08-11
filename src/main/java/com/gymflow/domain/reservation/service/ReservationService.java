@@ -16,6 +16,8 @@ import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
 import com.gymflow.global.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -74,5 +76,21 @@ public class ReservationService {
         Reservation savedReservation = reservationRepository.save(reservation);
 
         return ReservationMapper.toResponse(savedReservation);
+    }
+
+    public Page<ReservationResponse> getMyReservations(Pageable pageable) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        return reservationRepository.findAllByUserId(currentUserId, pageable)
+                .map(ReservationMapper::toResponse);
+    }
+
+    public ReservationResponse getMyReservationDetail(Long reservationId) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        Reservation reservation = reservationRepository.findByIdAndUserId(reservationId, currentUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        return ReservationMapper.toResponse(reservation);
     }
 }
