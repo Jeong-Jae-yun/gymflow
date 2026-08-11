@@ -146,13 +146,13 @@ Reservation Aggregate는 Aggregate Root 하나만으로 구성한다.
 
 ### Value Object
 
-```
-TimeSlot
-```
+없음 (현재 미사용)
 
-예약 시간은 TimeSlot Value Object로 관리한다.
+현재 구현에서는 예약 시작 시간과 종료 시간을 TimeSlot Value Object로 감싸지 않고,
+Reservation Aggregate Root의 startAt / endAt 필드로 직접 관리한다.
 
-예약 시작 시간과 종료 시간은 항상 함께 변경되므로 하나의 값 객체로 표현한다.
+비고: 향후 예약 연장, 슬롯 단위 검증 등 시간 관련 도메인 규칙이 복잡해지면
+TimeSlot Value Object로 리팩터링할 수 있다.
 
 ---
 
@@ -199,7 +199,17 @@ CONFIRMED
 ↓
 
 EXPIRED
+
+또는
+
+CONFIRMED
+
+↓
+
+NO_SHOW
 ```
+
+NO_SHOW는 체크인 가능 시간 내에 체크인하지 않은 경우의 상태이다.
 
 ---
 
@@ -208,10 +218,20 @@ EXPIRED
 ```
 Reservation (Aggregate Root)
 
-│
-
-└── TimeSlot (VO)
+├── id
+├── reservationBatchId
+├── user        (참조 — User Aggregate Root)
+├── resource    (참조 — Resource Aggregate Root)
+├── startAt
+├── endAt
+└── status
 ```
+
+Reservation은 user와 resource 필드를 통해 User Aggregate와 Resource Aggregate를 참조하지만,
+User와 Resource는 각각 독립적인 Aggregate Root이며 Reservation Aggregate에 속한 내부 Entity가 아니다.
+
+reservationBatchId는 UUID이며, 하나의 예약 요청으로 생성된 여러 Reservation이
+동일한 값을 공유할 수 있도록 UNIQUE 제약을 두지 않는다.
 
 ---
 ## 5. WaitingQueue Aggregate
@@ -375,11 +395,10 @@ Aggregate는 서로의 내부 상태를 직접 변경하지 않는다.
 
 ```
 Reservation
-
-resourceId
         │
-        ▼
-Resource Aggregate
+        ├──▶ User Aggregate
+        │
+        └──▶ Resource Aggregate
 
 Favorite
         │
@@ -391,6 +410,9 @@ Favorite
         ▼
       User
 ```
+
+Reservation은 User와 Resource를 각각 Aggregate Root 단위로만 참조하며,
+두 Aggregate의 내부 상태를 직접 변경하지 않는다.
 
 ---
 
@@ -668,6 +690,9 @@ endTime
 
 예약 시간 표현
 
+비고: 현재 Reservation Aggregate는 TimeSlot을 사용하지 않고
+startAt / endAt 필드로 직접 시간을 관리한다.
+
 ---
 
 ### Location
@@ -715,14 +740,23 @@ Value Object는 식별자를 가지지 않으며 불변 객체로 설계한다.
 ### ResourceStatus
 
 ```
-AVAILABLE
+ACTIVE
 
-IN_USE
+INACTIVE
 
 MAINTENANCE
-
-DISABLED
 ```
+
+ResourceStatus는 Resource 자체의 운영 상태만 표현한다.
+
+`IN_USE`(실시간 점유 여부)는 Resource의 운영 상태가 아니라
+특정 Time Slot의 예약 점유 결과이므로 Reservation Aggregate에서 판단한다.
+
+따라서 Resource는 다음 세 가지 운영 상태만 가진다.
+
+- ACTIVE : 예약 가능한 정상 운영 상태
+- INACTIVE : 운영하지 않는 상태 (예약 대상 아님)
+- MAINTENANCE : 점검 중인 상태 (예약 대상 아님)
 
 ---
 
@@ -736,6 +770,8 @@ CHECKED_IN
 COMPLETED
 
 CANCELLED
+
+NO_SHOW
 
 EXPIRED
 ```
@@ -752,7 +788,14 @@ PT_ROOM
 LOCKER
 
 STRETCH_ZONE
+
+SAUNA
+
+SHOWER_ROOM
 ```
+
+02-1 Domain Modeling 문서 1.1에서 예약 가능한 대상으로 제시한
+Sauna와 Shower Room을 ResourceType에 포함한다.
 
 ---
 

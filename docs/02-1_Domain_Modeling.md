@@ -2,12 +2,12 @@
 
 # Document Information
 
-| 항목 | 내용 |
-|------|------|
+| 항목 | 내용              |
+|------|-----------------|
 | Document | Domain Modeling |
-| Version | v1.0 |
-| Author | 정재윤 |
-| Last Updated | 2026-08-04 |
+| Version | v1.0            |
+| Author | 정재윤             |
+| Last Updated | 2026-08-11       |
 
 ---
 
@@ -169,6 +169,9 @@ Reservation은 다음 정보를 가진다.
 
 reservation_batch_id는 현재 단순 그룹 식별자로 사용하며,
 향후 ReservationGroup Aggregate로 확장 가능하다.
+
+여러 Reservation이 하나의 reservation_batch_id를 공유해야 하므로,
+reservation_batch_id에는 UNIQUE 제약을 두지 않는다.
 ---
 
 ## 3.3 상태(State) 중심 모델링
@@ -177,20 +180,7 @@ GymFlow에서는 Resource 상태와 Reservation 상태를 분리하여 관리한
 
 Resource 상태:
 
-AVAILABLE
-
-↓
-
-IN_USE
-
-↓
-
-AVAILABLE
-
-
-또는
-
-AVAILABLE
+ACTIVE
 
 ↓
 
@@ -198,14 +188,27 @@ MAINTENANCE
 
 ↓
 
-AVAILABLE
+ACTIVE
+
+
+또는
+
+ACTIVE
+
+↓
+
+INACTIVE
+
+
+Resource 상태는 운영 상태만 표현한다.
+
+특정 시간대의 점유 여부는 Resource 상태가 아니라
+Reservation이 판단한다.
 
 
 Reservation 상태:
 
-PENDING
-
-↓
+정상 흐름
 
 CONFIRMED
 
@@ -218,13 +221,32 @@ CHECKED_IN
 COMPLETED
 
 
+예외 흐름
+
+CONFIRMED
+
+↓
+
+CANCELLED
+
 또는
 
 CONFIRMED
 
 ↓
 
-CANCELED
+EXPIRED
+
+또는
+
+CONFIRMED
+
+↓
+
+NO_SHOW
+
+
+NO_SHOW는 체크인 가능 시간 내에 체크인하지 않은 경우의 상태이다.
 
 ---
 
@@ -368,7 +390,9 @@ GymFlow는 비즈니스 책임을 기준으로 다음과 같은 Bounded Context�
 ### 포함
 
 - Reservation (Aggregate Root)
-- TimeSlot (Value Object)
+
+현재 구현에서는 예약 시작 시간과 종료 시간을 TimeSlot Value Object로 감싸지 않고
+Reservation의 startAt / endAt 필드로 직접 관리한다.
 
 ---
 
