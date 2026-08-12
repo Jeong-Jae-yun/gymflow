@@ -202,4 +202,24 @@ public class ReservationService {
 
         return ReservationMapper.toResponse(reservation);
     }
+
+    @Transactional
+    public ReservationResponse noShow(Long reservationId) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        reservation.noShow(LocalDateTime.now());
+
+        return ReservationMapper.toResponse(reservation);
+    }
+
+    @Transactional
+    public ReservationResponse expire(Long reservationId) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        reservation.expire(LocalDateTime.now());
+
+        return ReservationMapper.toResponse(reservation);
+    }
 }

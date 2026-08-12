@@ -580,4 +580,174 @@ class ReservationTest {
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(status);
     }
+
+    @Test
+    @DisplayName("CONFIRMED 상태에서 startAt + 5분 이전에는 NO_SHOW 처리할 수 없다")
+    void noShow_BeforeGracePeriodElapsed_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime beforeGracePeriod = reservation.getStartAt()
+                .plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES)
+                .minusSeconds(1);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.noShow(beforeGracePeriod))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("startAt + 5분 시점에는 NO_SHOW 처리할 수 있다")
+    void noShow_AtGracePeriodBoundary_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime atGracePeriod = reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES);
+
+        // when
+        reservation.noShow(atGracePeriod);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
+    }
+
+    @Test
+    @DisplayName("5분 초과 후에도 NO_SHOW 처리할 수 있다")
+    void noShow_AfterGracePeriodElapsed_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime afterGracePeriod = reservation.getStartAt()
+                .plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES)
+                .plusMinutes(10);
+
+        // when
+        reservation.noShow(afterGracePeriod);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
+    }
+
+    @Test
+    @DisplayName("CHECKED_IN 상태에서는 NO_SHOW 처리할 수 없다")
+    void noShow_WithCheckedInReservation_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+        LocalDateTime afterGracePeriod = reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.noShow(afterGracePeriod))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class, names = {"CANCELLED", "COMPLETED", "EXPIRED"})
+    @DisplayName("CANCELLED/COMPLETED/EXPIRED 상태에서는 NO_SHOW 처리할 수 없다")
+    void noShow_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", status);
+        LocalDateTime afterGracePeriod = reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.noShow(afterGracePeriod))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(status);
+    }
+
+    @Test
+    @DisplayName("NO_SHOW 처리 이후에는 체크인할 수 없다")
+    void checkIn_WithNoShowReservation_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.noShow(reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES));
+
+        // when & then
+        assertThatThrownBy(reservation::checkIn)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
+    }
+
+    @Test
+    @DisplayName("CHECKED_IN 상태에서 endAt 이전에는 EXPIRED 처리할 수 없다")
+    void expire_BeforeEndAt_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+        LocalDateTime beforeEndAt = reservation.getEndAt().minusSeconds(1);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.expire(beforeEndAt))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("endAt 시점에는 EXPIRED 처리할 수 있다")
+    void expire_AtEndAt_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+
+        // when
+        reservation.expire(reservation.getEndAt());
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
+    }
+
+    @Test
+    @DisplayName("endAt 이후에도 EXPIRED 처리할 수 있다")
+    void expire_AfterEndAt_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+        LocalDateTime afterEndAt = reservation.getEndAt().plusMinutes(10);
+
+        // when
+        reservation.expire(afterEndAt);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
+    }
+
+    @Test
+    @DisplayName("CONFIRMED 상태에서는 EXPIRED 처리할 수 없다")
+    void expire_WithConfirmedReservation_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when & then
+        assertThatThrownBy(() -> reservation.expire(reservation.getEndAt()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class, names = {"COMPLETED", "CANCELLED", "NO_SHOW"})
+    @DisplayName("COMPLETED/CANCELLED/NO_SHOW 상태에서는 EXPIRED 처리할 수 없다")
+    void expire_WithNonCheckedInStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", status);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.expire(reservation.getEndAt()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(status);
+    }
+
+    @Test
+    @DisplayName("EXPIRED 처리 이후에는 체크아웃할 수 없다")
+    void checkOut_WithExpiredReservation_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+        reservation.expire(reservation.getEndAt());
+
+        // when & then
+        assertThatThrownBy(reservation::checkOut)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
+    }
 }

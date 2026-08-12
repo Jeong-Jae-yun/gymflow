@@ -160,6 +160,64 @@ class ReservationRepositoryTest {
     }
 
     @Test
+    @DisplayName("종료된 CHECKED_IN 예약은 다음 시간대 예약(existsOverlapping CONFIRMED 기준)을 막지 않는다")
+    void existsOverlapping_WithCheckedInReservationInAdjacentSlot_ShouldReturnFalse() {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+
+        Reservation checkedIn = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
+                .build();
+        checkedIn.checkIn();
+        reservationRepository.save(checkedIn);
+        entityManager.flush();
+
+        // when
+        boolean overlaps = reservationRepository.existsOverlapping(
+                resource.getId(),
+                ReservationStatus.CONFIRMED,
+                LocalDateTime.of(2026, 8, 12, 14, 15),
+                LocalDateTime.of(2026, 8, 12, 14, 30));
+
+        // then
+        assertThat(overlaps).isFalse();
+    }
+
+    @Test
+    @DisplayName("체크아웃하지 않은 CHECKED_IN 예약이 있어도 겹치는 시간대의 새 예약이 CONFIRMED 기준 충돌로 판단되지 않는다")
+    void existsOverlapping_WithCheckedInReservationInOverlappingSlot_ShouldReturnFalse() {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+
+        Reservation checkedIn = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
+                .build();
+        checkedIn.checkIn();
+        reservationRepository.save(checkedIn);
+        entityManager.flush();
+
+        // when
+        boolean overlaps = reservationRepository.existsOverlapping(
+                resource.getId(),
+                ReservationStatus.CONFIRMED,
+                LocalDateTime.of(2026, 8, 12, 14, 5),
+                LocalDateTime.of(2026, 8, 12, 14, 20));
+
+        // then
+        assertThat(overlaps).isFalse();
+    }
+
+    @Test
     @DisplayName("findAllByUserId는 현재 사용자의 예약만 조회한다")
     void findAllByUserId_ShouldReturnOnlyThatUsersReservations() {
         // given

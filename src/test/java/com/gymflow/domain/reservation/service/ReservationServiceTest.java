@@ -882,4 +882,94 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_CHECKOUTABLE);
         verify(usageHistoryRepository, never()).save(any(UsageHistory.class));
     }
+
+    @Test
+    @DisplayName("체크인 허용 시간이 지난 CONFIRMED 예약은 NO_SHOW 처리된다")
+    void noShow_WithEligibleReservation_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(10);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        // when
+        ReservationResponse response = reservationService.noShow(100L);
+
+        // then
+        assertThat(response.status()).isEqualTo(ReservationStatus.NO_SHOW);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 예약을 NO_SHOW 처리하면 예외가 발생한다")
+    void noShow_WithNonExistentReservation_ShouldThrowException() {
+        // given
+        when(reservationRepository.findById(999L)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.noShow(999L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("체크인 허용 시간이 지나지 않은 예약을 NO_SHOW 처리하면 예외가 발생한다")
+    void noShow_BeforeGracePeriodElapsed_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(1);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.noShow(100L))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("종료 시각이 지난 CHECKED_IN 예약은 EXPIRED 처리된다")
+    void expire_WithEligibleReservation_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(30);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(10));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        // when
+        ReservationResponse response = reservationService.expire(100L);
+
+        // then
+        assertThat(response.status()).isEqualTo(ReservationStatus.EXPIRED);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 예약을 EXPIRED 처리하면 예외가 발생한다")
+    void expire_WithNonExistentReservation_ShouldThrowException() {
+        // given
+        when(reservationRepository.findById(999L)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.expire(999L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("종료 시각이 지나지 않은 CHECKED_IN 예약을 EXPIRED 처리하면 예외가 발생한다")
+    void expire_BeforeEndAt_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(5);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.expire(100L))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
 }

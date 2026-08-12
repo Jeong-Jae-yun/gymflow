@@ -23,6 +23,7 @@ import java.util.UUID;
 public class Reservation extends BaseEntity {
 
     public static final int MAX_EXTENSION_COUNT = 2;
+    public static final int NO_SHOW_GRACE_MINUTES = 5;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -160,5 +161,27 @@ public class Reservation extends BaseEntity {
 
         this.status = ReservationStatus.COMPLETED;
         this.checkOutAt = LocalDateTime.now();
+    }
+
+    public void noShow(LocalDateTime now) {
+        if (status != ReservationStatus.CONFIRMED) {
+            throw new IllegalStateException("CONFIRMED 상태의 예약만 노쇼 처리할 수 있습니다.");
+        }
+        if (now.isBefore(startAt.plusMinutes(NO_SHOW_GRACE_MINUTES))) {
+            throw new IllegalStateException("체크인 허용 시간이 아직 지나지 않았습니다.");
+        }
+
+        this.status = ReservationStatus.NO_SHOW;
+    }
+
+    public void expire(LocalDateTime now) {
+        if (status != ReservationStatus.CHECKED_IN) {
+            throw new IllegalStateException("CHECKED_IN 상태의 예약만 만료 처리할 수 있습니다.");
+        }
+        if (now.isBefore(endAt)) {
+            throw new IllegalStateException("예약 종료 시각이 아직 지나지 않았습니다.");
+        }
+
+        this.status = ReservationStatus.EXPIRED;
     }
 }
