@@ -158,10 +158,13 @@ TimeSlot Value Object로 리팩터링할 수 있다.
 
 ### Business Rules
 
-- 동일한 Resource는 동일한 시간에 하나의 예약만 가능하다.
+- 동일한 Resource는 동일한 시간에 CONFIRMED 상태의 예약이 하나만 존재할 수 있다.
+- 예약 충돌 검사는 CONFIRMED 상태의 Reservation만을 대상으로 한다. CHECKED_IN 상태의 Reservation은 충돌 검사 대상에서 제외되며, 시간 구간이 종료된 CHECKED_IN 예약은 다음 시간대 예약을 막지 않는다.
+- 시간 구간이 정확히 맞닿는 예약(예: 14:00~14:15와 14:15~14:30)은 충돌로 보지 않는다.
 - 예약 생성 시 Resource는 예약 가능 상태여야 한다.
 - 예약 시간은 운영시간 내에 존재해야 한다.
-- 체크인 가능 시간이 지나면 예약은 자동 취소된다.
+- 예약 시작 시각(startAt)부터 5분 이내에 체크인하지 않으면 예약은 NO_SHOW 처리된다.
+- 체크인 후 예약 종료 시각(endAt)까지 체크아웃하지 않으면 예약은 EXPIRED 처리된다.
 - 체크아웃 이후 예약은 Completed 상태가 된다.
 - 예약 완료 후 UsageHistory 생성 이벤트를 발행한다.
 - 예약 연장은 다음 예약이 존재하지 않을 경우에만 가능하다.
@@ -198,18 +201,20 @@ CONFIRMED
 
 ↓
 
-EXPIRED
+NO_SHOW
 
 또는
 
-CONFIRMED
+CHECKED_IN
 
 ↓
 
-NO_SHOW
+EXPIRED
 ```
 
-NO_SHOW는 체크인 가능 시간 내에 체크인하지 않은 경우의 상태이다.
+NO_SHOW는 예약 시작 시각(startAt)부터 5분의 유예시간 내에 체크인하지 않은 경우의 상태이다.
+
+EXPIRED는 체크인은 했지만 예약 종료 시각(endAt)까지 체크아웃하지 않은 경우의 상태이다.
 
 ---
 
