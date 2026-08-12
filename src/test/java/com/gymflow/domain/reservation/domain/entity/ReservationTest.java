@@ -311,4 +311,145 @@ class ReservationTest {
         assertThat(reservation.getStatus()).isEqualTo(status);
         assertThat(reservation.getCancelReason()).isNull();
     }
+
+    @Test
+    @DisplayName("신규 생성된 Reservation의 extensionCount는 0이다")
+    void extensionCount_WhenCreated_ShouldBeZero() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // then
+        assertThat(reservation.getExtensionCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("CONFIRMED 상태의 Reservation은 정상적으로 연장된다")
+    void extend_WithConfirmedReservation_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime newEndAt = reservation.getEndAt().plusMinutes(15);
+
+        // when
+        reservation.extend(newEndAt);
+
+        // then
+        assertThat(reservation.getEndAt()).isEqualTo(newEndAt);
+        assertThat(reservation.getExtensionCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("연장할 때마다 extensionCount가 1씩 증가한다")
+    void extend_EachCall_ShouldIncrementExtensionCountByOne() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when
+        reservation.extend(reservation.getEndAt().plusMinutes(15));
+        reservation.extend(reservation.getEndAt().plusMinutes(15));
+
+        // then
+        assertThat(reservation.getExtensionCount()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("2회까지는 연장할 수 있다")
+    void extend_UpToTwice_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when & then
+        reservation.extend(reservation.getEndAt().plusMinutes(10));
+        reservation.extend(reservation.getEndAt().plusMinutes(10));
+
+        assertThat(reservation.getExtensionCount()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("3번째 연장은 실패한다")
+    void extend_ThirdTime_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.extend(reservation.getEndAt().plusMinutes(10));
+        reservation.extend(reservation.getEndAt().plusMinutes(10));
+
+        // when & then
+        assertThatThrownBy(() -> reservation.extend(reservation.getEndAt().plusMinutes(10)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getExtensionCount()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("CHECKED_IN 상태의 Reservation은 정상적으로 연장된다")
+    void extend_WithCheckedInReservation_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        LocalDateTime newEndAt = reservation.getEndAt().plusMinutes(15);
+
+        // when
+        reservation.extend(newEndAt);
+
+        // then
+        assertThat(reservation.getEndAt()).isEqualTo(newEndAt);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("CHECKED_IN 상태에서 연장하면 extensionCount가 증가한다")
+    void extend_WithCheckedInReservation_ShouldIncrementExtensionCount() {
+        // given
+        Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+
+        // when
+        reservation.extend(reservation.getEndAt().plusMinutes(15));
+
+        // then
+        assertThat(reservation.getExtensionCount()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("CONFIRMED/CHECKED_IN이 아닌 상태의 Reservation은 연장할 수 없다")
+    void extend_WithNonExtendableStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime originalEndAt = reservation.getEndAt();
+        ReflectionTestUtils.setField(reservation, "status", status);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.extend(originalEndAt.plusMinutes(15)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getEndAt()).isEqualTo(originalEndAt);
+        assertThat(reservation.getExtensionCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("새로운 endAt이 기존 endAt보다 이전이면 연장에 실패한다")
+    void extend_WithNewEndAtBeforeCurrentEndAt_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime originalEndAt = reservation.getEndAt();
+
+        // when & then
+        assertThatThrownBy(() -> reservation.extend(originalEndAt.minusMinutes(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(reservation.getEndAt()).isEqualTo(originalEndAt);
+        assertThat(reservation.getExtensionCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("새로운 endAt이 기존 endAt과 같으면 연장에 실패한다")
+    void extend_WithNewEndAtEqualToCurrentEndAt_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime originalEndAt = reservation.getEndAt();
+
+        // when & then
+        assertThatThrownBy(() -> reservation.extend(originalEndAt))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(reservation.getEndAt()).isEqualTo(originalEndAt);
+        assertThat(reservation.getExtensionCount()).isZero();
+    }
 }

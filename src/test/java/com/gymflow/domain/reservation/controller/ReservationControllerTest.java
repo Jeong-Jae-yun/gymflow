@@ -3,6 +3,7 @@ package com.gymflow.domain.reservation.controller;
 import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
+import com.gymflow.domain.reservation.dto.request.ReservationExtensionRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.reservation.service.ReservationService;
 import com.gymflow.global.common.exception.BusinessException;
@@ -52,7 +53,8 @@ class ReservationControllerTest {
                 LocalDateTime.of(2026, 8, 12, 10, 0),
                 LocalDateTime.of(2026, 8, 12, 10, 30),
                 ReservationStatus.CONFIRMED,
-                null
+                null,
+                0
         );
     }
 
@@ -64,7 +66,21 @@ class ReservationControllerTest {
                 LocalDateTime.of(2026, 8, 12, 10, 0),
                 LocalDateTime.of(2026, 8, 12, 10, 30),
                 ReservationStatus.CANCELLED,
-                CancelReason.SCHEDULE_CHANGE
+                CancelReason.SCHEDULE_CHANGE,
+                0
+        );
+    }
+
+    private ReservationResponse extendedResponse() {
+        return new ReservationResponse(
+                UUID.randomUUID(),
+                100L,
+                10L,
+                LocalDateTime.of(2026, 8, 12, 10, 0),
+                LocalDateTime.of(2026, 8, 12, 10, 45),
+                ReservationStatus.CONFIRMED,
+                null,
+                1
         );
     }
 
@@ -161,6 +177,60 @@ class ReservationControllerTest {
 
         // when & then
         mockMvc.perform(patch("/api/reservations/{reservationId}/cancel", 999L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_FOUND.getMessage()));
+    }
+
+    @Test
+    @DisplayName("정상적인 연장 요청은 200 OK와 연장된 ReservationResponse를 반환한다")
+    void extend_WithValidRequest_ShouldReturnOk() throws Exception {
+        // given
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+        when(reservationService.extendReservation(any(Long.class), any(ReservationExtensionRequest.class)))
+                .thenReturn(extendedResponse());
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/extend", 100L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(100L))
+                .andExpect(jsonPath("$.endAt").value("2026-08-12T10:45:00"))
+                .andExpect(jsonPath("$.extensionCount").value(1));
+    }
+
+    @Test
+    @DisplayName("duration이 없으면 400 Bad Request를 반환한다")
+    void extend_WithMissingDuration_ShouldReturnBadRequest() throws Exception {
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/extend", 100L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("duration이 0 이하이면 400 Bad Request를 반환한다")
+    void extend_WithNonPositiveDuration_ShouldReturnBadRequest() throws Exception {
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/extend", 100L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"duration\": 0}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("연장 대상 예약이 없으면 404 Not Found를 반환한다")
+    void extend_WithNonExistentReservation_ShouldReturnNotFound() throws Exception {
+        // given
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+        when(reservationService.extendReservation(any(Long.class), any(ReservationExtensionRequest.class)))
+                .thenThrow(new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/extend", 999L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isNotFound())

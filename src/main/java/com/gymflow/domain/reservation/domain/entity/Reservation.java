@@ -22,6 +22,8 @@ import java.util.UUID;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Reservation extends BaseEntity {
 
+    public static final int MAX_EXTENSION_COUNT = 2;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -60,6 +62,9 @@ public class Reservation extends BaseEntity {
     @Column(name = "cancel_reason")
     private CancelReason cancelReason;
 
+    @Column(name = "extension_count", nullable = false)
+    private Integer extensionCount;
+
     @Builder
     public Reservation(UUID reservationBatchId, User user, Resource resource, LocalDateTime startAt, LocalDateTime endAt) {
         validateUser(user);
@@ -73,6 +78,7 @@ public class Reservation extends BaseEntity {
         this.startAt = startAt;
         this.endAt = endAt;
         this.status = ReservationStatus.CONFIRMED;
+        this.extensionCount = 0;
     }
 
     private static void validateUser(User user) {
@@ -115,5 +121,20 @@ public class Reservation extends BaseEntity {
 
         this.status = ReservationStatus.CANCELLED;
         this.cancelReason = cancelReason;
+    }
+
+    public void extend(LocalDateTime newEndAt) {
+        if (status != ReservationStatus.CONFIRMED && status != ReservationStatus.CHECKED_IN) {
+            throw new IllegalStateException("CONFIRMED 또는 CHECKED_IN 상태의 예약만 연장할 수 있습니다.");
+        }
+        if (extensionCount >= MAX_EXTENSION_COUNT) {
+            throw new IllegalStateException("최대 연장 횟수를 초과했습니다.");
+        }
+        if (newEndAt == null || !newEndAt.isAfter(endAt)) {
+            throw new IllegalArgumentException("새로운 endAt은 기존 endAt보다 이후여야 합니다.");
+        }
+
+        this.endAt = newEndAt;
+        this.extensionCount++;
     }
 }

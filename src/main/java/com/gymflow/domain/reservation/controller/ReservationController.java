@@ -2,6 +2,7 @@ package com.gymflow.domain.reservation.controller;
 
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
+import com.gymflow.domain.reservation.dto.request.ReservationExtensionRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.reservation.service.ReservationService;
 import jakarta.validation.Valid;
@@ -50,6 +51,13 @@ public class ReservationController {
     public ResponseEntity<ReservationResponse> cancel(
             @PathVariable Long reservationId, @Valid @RequestBody CancelReservationRequest request) {
         ReservationResponse response = reservationService.cancelReservation(reservationId, request);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{reservationId}/extend")
+    public ResponseEntity<ReservationResponse> extend(
+            @PathVariable Long reservationId, @Valid @RequestBody ReservationExtensionRequest request) {
+        ReservationResponse response = reservationService.extendReservation(reservationId, request);
         return ResponseEntity.ok(response);
     }
 }

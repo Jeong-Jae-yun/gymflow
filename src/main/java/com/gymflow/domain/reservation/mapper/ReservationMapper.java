@@ -16,7 +16,8 @@ public final class ReservationMapper {
                 reservation.getStartAt(),
                 reservation.getEndAt(),
                 reservation.getStatus(),
-                reservation.getCancelReason()
+                reservation.getCancelReason(),
+                reservation.getExtensionCount()
         );
     }
 }

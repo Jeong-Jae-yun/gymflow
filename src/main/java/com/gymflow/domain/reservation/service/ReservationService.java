@@ -5,6 +5,7 @@ import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
+import com.gymflow.domain.reservation.dto.request.ReservationExtensionRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.reservation.mapper.ReservationMapper;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
@@ -22,6 +23,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -107,6 +109,52 @@ public class ReservationService {
         }
 
         reservation.cancel(request.cancelReason());
+
+        return ReservationMapper.toResponse(reservation);
+    }
+
+    @Transactional
+    public ReservationResponse extendReservation(Long reservationId, ReservationExtensionRequest request) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        Reservation reservation = reservationRepository.findByIdAndUserId(reservationId, currentUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        if (reservation.getStatus() != ReservationStatus.CONFIRMED
+                && reservation.getStatus() != ReservationStatus.CHECKED_IN) {
+            throw new BusinessException(ErrorCode.RESERVATION_NOT_EXTENDABLE);
+        }
+
+        Resource resource = resourceRepository.findWithReservationPolicyById(reservation.getResource().getId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        if (resource.getStatus() != ResourceStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_ACTIVE);
+        }
+
+        ReservationPolicy policy = resource.getReservationPolicy();
+        if (policy == null) {
+            throw new BusinessException(ErrorCode.RESERVATION_POLICY_NOT_FOUND);
+        }
+
+        if (reservation.getExtensionCount() >= Reservation.MAX_EXTENSION_COUNT) {
+            throw new BusinessException(ErrorCode.RESERVATION_EXTENSION_LIMIT_EXCEEDED);
+        }
+
+        LocalDateTime newEndAt = reservation.getEndAt().plusMinutes(request.duration());
+
+        long totalMinutes = Duration.between(reservation.getStartAt(), newEndAt).toMinutes();
+        if (totalMinutes > policy.getMaxDuration()) {
+            throw new BusinessException(ErrorCode.RESERVATION_MAX_DURATION_EXCEEDED);
+        }
+
+        boolean hasConflict = reservationRepository.existsOverlappingExcludingReservation(
+                resource.getId(), ReservationStatus.CONFIRMED, reservation.getEndAt(), newEndAt, reservation.getId());
+        if (hasConflict) {
+            throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+        }
+
+        reservation.extend(newEndAt);
 
         return ReservationMapper.toResponse(reservation);
     }

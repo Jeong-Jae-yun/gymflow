@@ -317,6 +317,99 @@ class ReservationRepositoryTest {
     }
 
     @Test
+    @DisplayName("예약을 연장하면 endAt과 extension_count가 실제 DB에 저장된다")
+    void extend_ShouldPersistEndAtAndExtensionCount() {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
+                .build();
+        Reservation saved = reservationRepository.save(reservation);
+        entityManager.flush();
+
+        // when
+        saved.extend(LocalDateTime.of(2026, 8, 12, 14, 30));
+        entityManager.flush();
+        entityManager.clear();
+
+        // then
+        Reservation reloaded = reservationRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+        assertThat(reloaded.getExtensionCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("existsOverlappingExcludingReservation은 자기 자신의 기존 예약을 충돌로 판단하지 않는다")
+    void existsOverlappingExcludingReservation_WithOwnReservation_ShouldReturnFalse() {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+
+        Reservation existing = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 30))
+                .build();
+        Reservation saved = reservationRepository.save(existing);
+        entityManager.flush();
+
+        // when
+        boolean overlaps = reservationRepository.existsOverlappingExcludingReservation(
+                resource.getId(),
+                ReservationStatus.CONFIRMED,
+                LocalDateTime.of(2026, 8, 12, 14, 0),
+                LocalDateTime.of(2026, 8, 12, 14, 45),
+                saved.getId());
+
+        // then
+        assertThat(overlaps).isFalse();
+    }
+
+    @Test
+    @DisplayName("existsOverlappingExcludingReservation은 다른 예약과 겹치면 true를 반환한다")
+    void existsOverlappingExcludingReservation_WithOtherOverlappingReservation_ShouldReturnTrue() {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+
+        Reservation target = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
+                .build();
+        Reservation other = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 20))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 40))
+                .build();
+        Reservation savedTarget = reservationRepository.save(target);
+        reservationRepository.save(other);
+        entityManager.flush();
+
+        // when
+        boolean overlaps = reservationRepository.existsOverlappingExcludingReservation(
+                resource.getId(),
+                ReservationStatus.CONFIRMED,
+                LocalDateTime.of(2026, 8, 12, 14, 15),
+                LocalDateTime.of(2026, 8, 12, 14, 30),
+                savedTarget.getId());
+
+        // then
+        assertThat(overlaps).isTrue();
+    }
+
+    @Test
     @DisplayName("findByIdAndUserId는 존재하지 않는 예약이면 빈 값을 반환한다")
     void findByIdAndUserId_WithNonExistentId_ShouldReturnEmpty() {
         // given

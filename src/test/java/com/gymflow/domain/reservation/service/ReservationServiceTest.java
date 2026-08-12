@@ -6,6 +6,7 @@ import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
+import com.gymflow.domain.reservation.dto.request.ReservationExtensionRequest;
 import com.gymflow.domain.reservation.dto.response.ReservationResponse;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
@@ -499,5 +500,192 @@ class ReservationServiceTest {
         // when & then
         assertThatThrownBy(() -> reservationService.cancelReservation(100L, request))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("정상적인 연장 요청이면 endAt이 늘어나고 extensionCount가 증가한다")
+    void extendReservation_WithValidRequest_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
+                .thenReturn(false);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when
+        ReservationResponse response = reservationService.extendReservation(100L, request);
+
+        // then
+        assertThat(response.endAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+        assertThat(response.extensionCount()).isEqualTo(1);
+        assertThat(reservation.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+        assertThat(reservation.getExtensionCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 예약을 연장하면 예외가 발생한다")
+    void extendReservation_WithOtherUsersReservation_ShouldThrowException() {
+        // given
+        // findByIdAndUserId가 이미 소유자 기준으로 필터링하므로 타인의 예약은 조회되지 않는다
+        when(reservationRepository.findByIdAndUserId(200L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(200L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 예약을 연장하면 예외가 발생한다")
+    void extendReservation_WithNonExistentReservation_ShouldThrowException() {
+        // given
+        when(reservationRepository.findByIdAndUserId(999L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(999L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("CHECKED_IN 상태의 예약도 정상적으로 연장된다")
+    void extendReservation_WithCheckedInReservation_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
+                .thenReturn(false);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when
+        ReservationResponse response = reservationService.extendReservation(100L, request);
+
+        // then
+        assertThat(response.endAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("CONFIRMED/CHECKED_IN이 아닌 상태의 예약은 연장할 수 없다")
+    void extendReservation_WithNonExtendableStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", status);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_EXTENDABLE);
+    }
+
+    @Test
+    @DisplayName("Resource가 ACTIVE 상태가 아니면 연장할 수 없다")
+    void extendReservation_WithInactiveResource_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        ReflectionTestUtils.setField(resource, "status", ResourceStatus.MAINTENANCE);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_ACTIVE);
+    }
+
+    @Test
+    @DisplayName("연장 후 총 이용시간이 maxDuration을 초과하면 예외가 발생한다")
+    void extendReservation_WithTotalDurationExceedingMaxDuration_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 45));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        ReservationExtensionRequest request = new ReservationExtensionRequest(30);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_MAX_DURATION_EXCEEDED);
+    }
+
+    @Test
+    @DisplayName("이미 2회 연장한 예약은 다시 연장할 수 없다")
+    void extendReservation_WithExtensionCountAtLimit_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 15));
+        ReflectionTestUtils.setField(reservation, "extensionCount", 2);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_EXTENSION_LIMIT_EXCEEDED);
+    }
+
+    @Test
+    @DisplayName("연장하려는 시간대가 다른 예약과 겹치면 예외가 발생한다")
+    void extendReservation_WithOverlappingReservation_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
+                .thenReturn(true);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_TIME_CONFLICT);
+    }
+
+    @Test
+    @DisplayName("경계가 맞닿는 다른 예약이 있어도 정상적으로 연장된다")
+    void extendReservation_WithAdjacentReservation_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
+                .thenReturn(false);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when
+        ReservationResponse response = reservationService.extendReservation(100L, request);
+
+        // then
+        assertThat(response.endAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
     }
 }

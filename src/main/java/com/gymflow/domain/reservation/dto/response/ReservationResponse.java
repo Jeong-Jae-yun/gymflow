@@ -13,6 +13,7 @@ public record ReservationResponse(
         LocalDateTime startAt,
         LocalDateTime endAt,
         ReservationStatus status,
-        CancelReason cancelReason
+        CancelReason cancelReason,
+        Integer extensionCount
 ) {
 }

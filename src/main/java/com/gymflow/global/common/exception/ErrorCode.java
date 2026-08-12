@@ -15,7 +15,10 @@ public enum ErrorCode {
     INVALID_RESERVATION_DURATION(HttpStatus.BAD_REQUEST, "예약 시간이 허용된 범위를 벗어났습니다."),
     RESERVATION_TIME_CONFLICT(HttpStatus.CONFLICT, "이미 예약된 시간과 겹칩니다."),
     RESERVATION_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 예약입니다."),
-    RESERVATION_NOT_CANCELLABLE(HttpStatus.CONFLICT, "취소할 수 없는 예약 상태입니다.");
+    RESERVATION_NOT_CANCELLABLE(HttpStatus.CONFLICT, "취소할 수 없는 예약 상태입니다."),
+    RESERVATION_NOT_EXTENDABLE(HttpStatus.CONFLICT, "연장할 수 없는 예약 상태입니다."),
+    RESERVATION_EXTENSION_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "최대 연장 횟수를 초과했습니다."),
+    RESERVATION_MAX_DURATION_EXCEEDED(HttpStatus.BAD_REQUEST, "예약의 최대 이용 시간을 초과했습니다.");
 
     private final HttpStatus httpStatus;
     private final String message;
