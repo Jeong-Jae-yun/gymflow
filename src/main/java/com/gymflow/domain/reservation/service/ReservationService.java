@@ -12,6 +12,8 @@ import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.usagehistory.domain.entity.UsageHistory;
+import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.global.common.exception.BusinessException;
@@ -35,6 +37,7 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final ResourceRepository resourceRepository;
     private final UserRepository userRepository;
+    private final UsageHistoryRepository usageHistoryRepository;
 
     @Transactional
     public ReservationResponse createReservation(ReservationCreateRequest request) {
@@ -187,6 +190,15 @@ public class ReservationService {
         }
 
         reservation.checkOut();
+
+        UsageHistory usageHistory = UsageHistory.builder()
+                .reservation(reservation)
+                .user(reservation.getUser())
+                .resource(reservation.getResource())
+                .startedAt(reservation.getCheckInAt())
+                .endedAt(reservation.getCheckOutAt())
+                .build();
+        usageHistoryRepository.save(usageHistory);
 
         return ReservationMapper.toResponse(reservation);
     }

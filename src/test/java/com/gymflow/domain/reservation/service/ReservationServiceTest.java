@@ -13,6 +13,8 @@ import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.usagehistory.domain.entity.UsageHistory;
+import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.domain.user.domain.repository.UserRepository;
@@ -66,6 +68,9 @@ class ReservationServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private UsageHistoryRepository usageHistoryRepository;
 
     @InjectMocks
     private ReservationService reservationService;
@@ -757,6 +762,7 @@ class ReservationServiceTest {
         Reservation reservation = reservation(100L, resource, user(),
                 LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
         ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        ReflectionTestUtils.setField(reservation, "checkInAt", LocalDateTime.now().minusMinutes(19));
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
 
         // when
@@ -765,6 +771,55 @@ class ReservationServiceTest {
         // then
         assertThat(response.status()).isEqualTo(ReservationStatus.COMPLETED);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.COMPLETED);
+        assertThat(reservation.getCheckOutAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("체크아웃 시 UsageHistory가 생성되고 reservation/user/resource가 올바르게 연결된다")
+    void checkOutReservation_ShouldCreateUsageHistoryWithCorrectAssociations() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        User user = user();
+        Reservation reservation = reservation(100L, resource, user,
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        ReflectionTestUtils.setField(reservation, "checkInAt", LocalDateTime.now().minusMinutes(19));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when
+        reservationService.checkOutReservation(100L);
+
+        // then
+        ArgumentCaptor<UsageHistory> captor = ArgumentCaptor.forClass(UsageHistory.class);
+        verify(usageHistoryRepository).save(captor.capture());
+        UsageHistory usageHistory = captor.getValue();
+        assertThat(usageHistory.getReservation()).isSameAs(reservation);
+        assertThat(usageHistory.getUser()).isSameAs(user);
+        assertThat(usageHistory.getResource()).isSameAs(resource);
+        assertThat(usageHistory.getStartedAt()).isEqualTo(reservation.getCheckInAt());
+        assertThat(usageHistory.getEndedAt()).isEqualTo(reservation.getCheckOutAt());
+    }
+
+    @Test
+    @DisplayName("UsageHistory의 duration은 실제 체크인/체크아웃 시간 차이로 계산된다")
+    void checkOutReservation_ShouldCalculateUsageHistoryDurationFromActualTime() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 30));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        ReflectionTestUtils.setField(reservation, "checkInAt", LocalDateTime.now().minusMinutes(19));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when
+        reservationService.checkOutReservation(100L);
+
+        // then
+        ArgumentCaptor<UsageHistory> captor = ArgumentCaptor.forClass(UsageHistory.class);
+        verify(usageHistoryRepository).save(captor.capture());
+        long expectedDuration = java.time.Duration.between(
+                reservation.getCheckInAt(), reservation.getCheckOutAt()).toMinutes();
+        assertThat(captor.getValue().getDuration()).isEqualTo((int) expectedDuration);
     }
 
     @Test
@@ -808,5 +863,23 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.checkOutReservation(100L))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_CHECKOUTABLE);
+        verify(usageHistoryRepository, never()).save(any(UsageHistory.class));
+    }
+
+    @Test
+    @DisplayName("이미 체크아웃되어 COMPLETED된 예약을 다시 체크아웃하면 UsageHistory가 중복 생성되지 않는다")
+    void checkOutReservation_WithAlreadyCompletedReservation_ShouldNotCreateDuplicateUsageHistory() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.COMPLETED);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkOutReservation(100L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_CHECKOUTABLE);
+        verify(usageHistoryRepository, never()).save(any(UsageHistory.class));
     }
 }

@@ -65,6 +65,12 @@ public class Reservation extends BaseEntity {
     @Column(name = "extension_count", nullable = false)
     private Integer extensionCount;
 
+    @Column(name = "check_in_at")
+    private LocalDateTime checkInAt;
+
+    @Column(name = "check_out_at")
+    private LocalDateTime checkOutAt;
+
     @Builder
     public Reservation(UUID reservationBatchId, User user, Resource resource, LocalDateTime startAt, LocalDateTime endAt) {
         validateUser(user);
@@ -144,6 +150,7 @@ public class Reservation extends BaseEntity {
         }
 
         this.status = ReservationStatus.CHECKED_IN;
+        this.checkInAt = LocalDateTime.now();
     }
 
     public void checkOut() {
@@ -152,5 +159,6 @@ public class Reservation extends BaseEntity {
         }
 
         this.status = ReservationStatus.COMPLETED;
+        this.checkOutAt = LocalDateTime.now();
     }
 }

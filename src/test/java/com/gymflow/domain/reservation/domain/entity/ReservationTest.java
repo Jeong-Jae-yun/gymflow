@@ -467,6 +467,22 @@ class ReservationTest {
     }
 
     @Test
+    @DisplayName("체크인하면 checkInAt이 저장된다")
+    void checkIn_ShouldStoreCheckInAt() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime before = LocalDateTime.now();
+
+        // when
+        reservation.checkIn();
+
+        // then
+        LocalDateTime after = LocalDateTime.now();
+        assertThat(reservation.getCheckInAt()).isNotNull();
+        assertThat(reservation.getCheckInAt()).isBetween(before, after);
+    }
+
+    @Test
     @DisplayName("CHECKED_IN 상태의 Reservation은 체크아웃하면 COMPLETED 상태가 된다")
     void checkOut_WithCheckedInReservation_ShouldChangeStatusToCompleted() {
         // given
@@ -478,6 +494,37 @@ class ReservationTest {
 
         // then
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("체크아웃하면 checkOutAt이 저장된다")
+    void checkOut_ShouldStoreCheckOutAt() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+        LocalDateTime before = LocalDateTime.now();
+
+        // when
+        reservation.checkOut();
+
+        // then
+        LocalDateTime after = LocalDateTime.now();
+        assertThat(reservation.getCheckOutAt()).isNotNull();
+        assertThat(reservation.getCheckOutAt()).isBetween(before, after);
+    }
+
+    @Test
+    @DisplayName("checkInAt은 checkOutAt보다 이후가 되지 않는다")
+    void checkInAt_ShouldNotBeAfterCheckOutAt() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when
+        reservation.checkIn();
+        reservation.checkOut();
+
+        // then
+        assertThat(reservation.getCheckInAt()).isBeforeOrEqualTo(reservation.getCheckOutAt());
     }
 
     @Test
