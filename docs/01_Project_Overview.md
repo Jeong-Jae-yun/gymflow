@@ -6,12 +6,12 @@
 
 ## Document Information
 
-| 항목 | 내용 |
-|------|------|
+| 항목 | 내용               |
+|------|------------------|
 | Document | Project Overview |
-| Version | v1.0 |
-| Author | 정재윤 |
-| Last Updated | 2026-08-03 |
+| Version | v1.0             |
+| Author | 정재윤              |
+| Last Updated | 2026-08-12       |
 ---
 
 # 1. 프로젝트 소개
