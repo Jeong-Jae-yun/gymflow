@@ -2,6 +2,8 @@ package com.gymflow.domain.resource.domain.repository;
 
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -14,4 +16,7 @@ public interface ResourceRepository extends JpaRepository<Resource, Long> {
     Optional<Resource> findWithReservationPolicyById(Long id);
 
     List<Resource> findAllByStatus(ResourceStatus status);
+
+    @EntityGraph(attributePaths = "reservationPolicy")
+    Page<Resource> findAll(Pageable pageable);
 }
