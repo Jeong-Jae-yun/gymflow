@@ -20,7 +20,9 @@ public enum ErrorCode {
     RESERVATION_EXTENSION_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "최대 연장 횟수를 초과했습니다."),
     RESERVATION_MAX_DURATION_EXCEEDED(HttpStatus.BAD_REQUEST, "예약의 최대 이용 시간을 초과했습니다."),
     RESERVATION_NOT_CHECKINABLE(HttpStatus.CONFLICT, "체크인할 수 없는 예약 상태입니다."),
-    RESERVATION_NOT_CHECKOUTABLE(HttpStatus.CONFLICT, "체크아웃할 수 없는 예약 상태입니다.");
+    RESERVATION_NOT_CHECKOUTABLE(HttpStatus.CONFLICT, "체크아웃할 수 없는 예약 상태입니다."),
+    FAVORITE_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 즐겨찾기에 추가된 Resource입니다."),
+    FAVORITE_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 즐겨찾기입니다.");
 
     private final HttpStatus httpStatus;
     private final String message;
