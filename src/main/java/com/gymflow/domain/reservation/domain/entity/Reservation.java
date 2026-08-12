@@ -137,4 +137,20 @@ public class Reservation extends BaseEntity {
         this.endAt = newEndAt;
         this.extensionCount++;
     }
+
+    public void checkIn() {
+        if (status != ReservationStatus.CONFIRMED) {
+            throw new IllegalStateException("CONFIRMED 상태의 예약만 체크인할 수 있습니다.");
+        }
+
+        this.status = ReservationStatus.CHECKED_IN;
+    }
+
+    public void checkOut() {
+        if (status != ReservationStatus.CHECKED_IN) {
+            throw new IllegalStateException("CHECKED_IN 상태의 예약만 체크아웃할 수 있습니다.");
+        }
+
+        this.status = ReservationStatus.COMPLETED;
+    }
 }

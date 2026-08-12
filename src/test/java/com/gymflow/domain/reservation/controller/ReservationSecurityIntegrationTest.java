@@ -45,4 +45,18 @@ class ReservationSecurityIntegrationTest {
                         .content("{\"duration\": 15}"))
                 .andExpect(status().isUnauthorized());
     }
+
+    @Test
+    @DisplayName("토큰 없이 예약을 체크인하면 401을 반환한다")
+    void checkInReservation_WithoutToken_ShouldReturnUnauthorized() throws Exception {
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-in", 1L))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("토큰 없이 예약을 체크아웃하면 401을 반환한다")
+    void checkOutReservation_WithoutToken_ShouldReturnUnauthorized() throws Exception {
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-out", 1L))
+                .andExpect(status().isUnauthorized());
+    }
 }

@@ -18,7 +18,9 @@ public enum ErrorCode {
     RESERVATION_NOT_CANCELLABLE(HttpStatus.CONFLICT, "취소할 수 없는 예약 상태입니다."),
     RESERVATION_NOT_EXTENDABLE(HttpStatus.CONFLICT, "연장할 수 없는 예약 상태입니다."),
     RESERVATION_EXTENSION_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "최대 연장 횟수를 초과했습니다."),
-    RESERVATION_MAX_DURATION_EXCEEDED(HttpStatus.BAD_REQUEST, "예약의 최대 이용 시간을 초과했습니다.");
+    RESERVATION_MAX_DURATION_EXCEEDED(HttpStatus.BAD_REQUEST, "예약의 최대 이용 시간을 초과했습니다."),
+    RESERVATION_NOT_CHECKINABLE(HttpStatus.CONFLICT, "체크인할 수 없는 예약 상태입니다."),
+    RESERVATION_NOT_CHECKOUTABLE(HttpStatus.CONFLICT, "체크아웃할 수 없는 예약 상태입니다.");
 
     private final HttpStatus httpStatus;
     private final String message;

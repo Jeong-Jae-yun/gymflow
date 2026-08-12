@@ -60,4 +60,16 @@ public class ReservationController {
         ReservationResponse response = reservationService.extendReservation(reservationId, request);
         return ResponseEntity.ok(response);
     }
+
+    @PatchMapping("/{reservationId}/check-in")
+    public ResponseEntity<ReservationResponse> checkIn(@PathVariable Long reservationId) {
+        ReservationResponse response = reservationService.checkInReservation(reservationId);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{reservationId}/check-out")
+    public ResponseEntity<ReservationResponse> checkOut(@PathVariable Long reservationId) {
+        ReservationResponse response = reservationService.checkOutReservation(reservationId);
+        return ResponseEntity.ok(response);
+    }
 }

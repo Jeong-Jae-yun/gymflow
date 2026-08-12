@@ -158,4 +158,36 @@ public class ReservationService {
 
         return ReservationMapper.toResponse(reservation);
     }
+
+    @Transactional
+    public ReservationResponse checkInReservation(Long reservationId) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        Reservation reservation = reservationRepository.findByIdAndUserId(reservationId, currentUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        if (reservation.getStatus() != ReservationStatus.CONFIRMED) {
+            throw new BusinessException(ErrorCode.RESERVATION_NOT_CHECKINABLE);
+        }
+
+        reservation.checkIn();
+
+        return ReservationMapper.toResponse(reservation);
+    }
+
+    @Transactional
+    public ReservationResponse checkOutReservation(Long reservationId) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        Reservation reservation = reservationRepository.findByIdAndUserId(reservationId, currentUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        if (reservation.getStatus() != ReservationStatus.CHECKED_IN) {
+            throw new BusinessException(ErrorCode.RESERVATION_NOT_CHECKOUTABLE);
+        }
+
+        reservation.checkOut();
+
+        return ReservationMapper.toResponse(reservation);
+    }
 }

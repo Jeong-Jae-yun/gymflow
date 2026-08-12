@@ -452,4 +452,85 @@ class ReservationTest {
         assertThat(reservation.getEndAt()).isEqualTo(originalEndAt);
         assertThat(reservation.getExtensionCount()).isZero();
     }
+
+    @Test
+    @DisplayName("CONFIRMED 상태의 Reservation은 체크인하면 CHECKED_IN 상태가 된다")
+    void checkIn_WithConfirmedReservation_ShouldChangeStatusToCheckedIn() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when
+        reservation.checkIn();
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("CHECKED_IN 상태의 Reservation은 체크아웃하면 COMPLETED 상태가 된다")
+    void checkOut_WithCheckedInReservation_ShouldChangeStatusToCompleted() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+
+        // when
+        reservation.checkOut();
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("이미 CHECKED_IN 상태인 Reservation은 다시 체크인할 수 없다")
+    void checkIn_WithAlreadyCheckedInReservation_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+
+        // when & then
+        assertThatThrownBy(reservation::checkIn)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("CONFIRMED 상태의 Reservation은 체크아웃할 수 없다")
+    void checkOut_WithConfirmedReservation_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when & then
+        assertThatThrownBy(reservation::checkOut)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("COMPLETED 상태의 Reservation은 다시 체크아웃할 수 없다")
+    void checkOut_WithCompletedReservation_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        reservation.checkIn();
+        reservation.checkOut();
+
+        // when & then
+        assertThatThrownBy(reservation::checkOut)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.COMPLETED);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("CONFIRMED가 아닌 상태의 Reservation은 체크인할 수 없다")
+    void checkIn_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", status);
+
+        // when & then
+        assertThatThrownBy(reservation::checkIn)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(status);
+    }
 }

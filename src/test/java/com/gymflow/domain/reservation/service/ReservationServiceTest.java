@@ -688,4 +688,125 @@ class ReservationServiceTest {
         // then
         assertThat(response.endAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
     }
+
+    @Test
+    @DisplayName("CONFIRMED 상태의 예약은 정상적으로 체크인된다")
+    void checkInReservation_WithConfirmedReservation_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when
+        ReservationResponse response = reservationService.checkInReservation(100L);
+
+        // then
+        assertThat(response.status()).isEqualTo(ReservationStatus.CHECKED_IN);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 예약을 체크인하면 예외가 발생한다")
+    void checkInReservation_WithNonExistentReservation_ShouldThrowException() {
+        // given
+        when(reservationRepository.findByIdAndUserId(999L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkInReservation(999L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 예약을 체크인하면 예외가 발생한다")
+    void checkInReservation_WithOtherUsersReservation_ShouldThrowException() {
+        // given
+        // findByIdAndUserId가 이미 소유자 기준으로 필터링하므로 타인의 예약은 조회되지 않는다
+        when(reservationRepository.findByIdAndUserId(200L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkInReservation(200L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("CONFIRMED가 아닌 상태의 예약은 체크인할 수 없다")
+    void checkInReservation_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", status);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkInReservation(100L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_CHECKINABLE);
+    }
+
+    @Test
+    @DisplayName("CHECKED_IN 상태의 예약은 정상적으로 체크아웃된다")
+    void checkOutReservation_WithCheckedInReservation_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when
+        ReservationResponse response = reservationService.checkOutReservation(100L);
+
+        // then
+        assertThat(response.status()).isEqualTo(ReservationStatus.COMPLETED);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 예약을 체크아웃하면 예외가 발생한다")
+    void checkOutReservation_WithNonExistentReservation_ShouldThrowException() {
+        // given
+        when(reservationRepository.findByIdAndUserId(999L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkOutReservation(999L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 예약을 체크아웃하면 예외가 발생한다")
+    void checkOutReservation_WithOtherUsersReservation_ShouldThrowException() {
+        // given
+        // findByIdAndUserId가 이미 소유자 기준으로 필터링하므로 타인의 예약은 조회되지 않는다
+        when(reservationRepository.findByIdAndUserId(200L, CURRENT_USER_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkOutReservation(200L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("CHECKED_IN이 아닌 상태의 예약은 체크아웃할 수 없다")
+    void checkOutReservation_WithNonCheckedInStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", status);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkOutReservation(100L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_CHECKOUTABLE);
+    }
 }

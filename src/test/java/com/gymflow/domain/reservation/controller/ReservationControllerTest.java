@@ -84,6 +84,32 @@ class ReservationControllerTest {
         );
     }
 
+    private ReservationResponse checkedInResponse() {
+        return new ReservationResponse(
+                UUID.randomUUID(),
+                100L,
+                10L,
+                LocalDateTime.of(2026, 8, 12, 10, 0),
+                LocalDateTime.of(2026, 8, 12, 10, 30),
+                ReservationStatus.CHECKED_IN,
+                null,
+                0
+        );
+    }
+
+    private ReservationResponse completedResponse() {
+        return new ReservationResponse(
+                UUID.randomUUID(),
+                100L,
+                10L,
+                LocalDateTime.of(2026, 8, 12, 10, 0),
+                LocalDateTime.of(2026, 8, 12, 10, 30),
+                ReservationStatus.COMPLETED,
+                null,
+                0
+        );
+    }
+
     @Test
     @DisplayName("내 예약 목록 조회는 200 OK와 Page 형태의 응답을 반환한다")
     void getMyReservations_ShouldReturnOkWithPage() throws Exception {
@@ -235,5 +261,83 @@ class ReservationControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_FOUND.getMessage()));
+    }
+
+    @Test
+    @DisplayName("정상적인 체크인 요청은 200 OK와 CHECKED_IN 상태의 ReservationResponse를 반환한다")
+    void checkIn_WithValidRequest_ShouldReturnOk() throws Exception {
+        // given
+        when(reservationService.checkInReservation(100L)).thenReturn(checkedInResponse());
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-in", 100L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(100L))
+                .andExpect(jsonPath("$.status").value("CHECKED_IN"));
+    }
+
+    @Test
+    @DisplayName("체크인 대상 예약이 없으면 404 Not Found를 반환한다")
+    void checkIn_WithNonExistentReservation_ShouldReturnNotFound() throws Exception {
+        // given
+        when(reservationService.checkInReservation(999L))
+                .thenThrow(new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-in", 999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_FOUND.getMessage()));
+    }
+
+    @Test
+    @DisplayName("체크인할 수 없는 상태의 예약이면 409 Conflict를 반환한다")
+    void checkIn_WithNonConfirmedReservation_ShouldReturnConflict() throws Exception {
+        // given
+        when(reservationService.checkInReservation(100L))
+                .thenThrow(new BusinessException(ErrorCode.RESERVATION_NOT_CHECKINABLE));
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-in", 100L))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_CHECKINABLE.getMessage()));
+    }
+
+    @Test
+    @DisplayName("정상적인 체크아웃 요청은 200 OK와 COMPLETED 상태의 ReservationResponse를 반환한다")
+    void checkOut_WithValidRequest_ShouldReturnOk() throws Exception {
+        // given
+        when(reservationService.checkOutReservation(100L)).thenReturn(completedResponse());
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-out", 100L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservationId").value(100L))
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    @Test
+    @DisplayName("체크아웃 대상 예약이 없으면 404 Not Found를 반환한다")
+    void checkOut_WithNonExistentReservation_ShouldReturnNotFound() throws Exception {
+        // given
+        when(reservationService.checkOutReservation(999L))
+                .thenThrow(new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-out", 999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_FOUND.getMessage()));
+    }
+
+    @Test
+    @DisplayName("체크아웃할 수 없는 상태의 예약이면 409 Conflict를 반환한다")
+    void checkOut_WithNonCheckedInReservation_ShouldReturnConflict() throws Exception {
+        // given
+        when(reservationService.checkOutReservation(100L))
+                .thenThrow(new BusinessException(ErrorCode.RESERVATION_NOT_CHECKOUTABLE));
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-out", 100L))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(ErrorCode.RESERVATION_NOT_CHECKOUTABLE.getMessage()));
     }
 }
