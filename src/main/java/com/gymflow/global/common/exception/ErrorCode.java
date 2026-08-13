@@ -22,7 +22,12 @@ public enum ErrorCode {
     RESERVATION_NOT_CHECKINABLE(HttpStatus.CONFLICT, "체크인할 수 없는 예약 상태입니다."),
     RESERVATION_NOT_CHECKOUTABLE(HttpStatus.CONFLICT, "체크아웃할 수 없는 예약 상태입니다."),
     FAVORITE_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 즐겨찾기에 추가된 Resource입니다."),
-    FAVORITE_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 즐겨찾기입니다.");
+    FAVORITE_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 즐겨찾기입니다."),
+    INVALID_WAITING_QUEUE_TIME_RANGE(HttpStatus.BAD_REQUEST, "startAt은 endAt보다 이전이어야 합니다."),
+    WAITING_QUEUE_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 동일한 시간대에 대기 중인 대기열이 있습니다."),
+    WAITING_QUEUE_NOT_AVAILABLE(HttpStatus.CONFLICT, "이미 예약 가능한 시간대이므로 대기열에 등록할 수 없습니다."),
+    WAITING_QUEUE_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 대기열입니다."),
+    WAITING_QUEUE_NOT_CANCELLABLE(HttpStatus.CONFLICT, "취소할 수 없는 대기열 상태입니다.");
 
     private final HttpStatus httpStatus;
     private final String message;
