@@ -105,13 +105,6 @@ public class WaitingQueueService {
         removeFromRedis(waitingQueue);
     }
 
-    /*
-     * MySQL 저장은 이미 현재 트랜잭션에 반영되었으므로, Redis 등록이 실패했다고 해서
-     * 예외를 던져 트랜잭션 전체를 롤백시키지 않는다. 이 단계의 Redis Sorted Set은
-     * 대기 순번 조회를 보조하는 데이터일 뿐 예약 도메인의 source of truth가 아니므로,
-     * 분산 트랜잭션/Lua Script 없이 "로그를 남기고 waitingRank는 null로 응답"하는 것이
-     * 현재 수준에서 가장 안전한 절충안이다.
-     */
     private Long registerToRedisAndGetRank(WaitingQueue waitingQueue) {
         Long resourceId = waitingQueue.getResource().getId();
         LocalDateTime startAt = waitingQueue.getStartAt();
