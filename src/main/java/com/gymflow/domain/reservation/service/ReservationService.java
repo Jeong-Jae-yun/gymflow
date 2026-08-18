@@ -2,6 +2,7 @@ package com.gymflow.domain.reservation.service;
 
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
+import com.gymflow.domain.reservation.domain.redis.ReservationLockRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
@@ -38,6 +39,7 @@ public class ReservationService {
     private final ResourceRepository resourceRepository;
     private final UserRepository userRepository;
     private final UsageHistoryRepository usageHistoryRepository;
+    private final ReservationLockRepository reservationLockRepository;
 
     @Transactional
     public ReservationResponse createReservation(ReservationCreateRequest request) {
@@ -63,25 +65,32 @@ public class ReservationService {
         LocalDateTime startAt = request.startAt();
         LocalDateTime endAt = startAt.plusMinutes(duration);
 
-        boolean hasConflict = reservationRepository.existsOverlapping(
-                resource.getId(), ReservationStatus.CONFIRMED, startAt, endAt);
-        if (hasConflict) {
-            throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+
+        String lockToken = reservationLockRepository.tryLock(resource.getId(), startAt, endAt)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+        try {
+            boolean hasConflict = reservationRepository.existsOverlapping(
+                    resource.getId(), ReservationStatus.CONFIRMED, startAt, endAt);
+            if (hasConflict) {
+                throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+            }
+
+            User user = userRepository.getReferenceById(currentUserId);
+
+            Reservation reservation = Reservation.builder()
+                    .reservationBatchId(UUID.randomUUID())
+                    .user(user)
+                    .resource(resource)
+                    .startAt(startAt)
+                    .endAt(endAt)
+                    .build();
+
+            Reservation savedReservation = reservationRepository.save(reservation);
+
+            return ReservationMapper.toResponse(savedReservation);
+        } finally {
+            reservationLockRepository.unlock(resource.getId(), startAt, endAt, lockToken);
         }
-
-        User user = userRepository.getReferenceById(currentUserId);
-
-        Reservation reservation = Reservation.builder()
-                .reservationBatchId(UUID.randomUUID())
-                .user(user)
-                .resource(resource)
-                .startAt(startAt)
-                .endAt(endAt)
-                .build();
-
-        Reservation savedReservation = reservationRepository.save(reservation);
-
-        return ReservationMapper.toResponse(savedReservation);
     }
 
     public Page<ReservationResponse> getMyReservations(Pageable pageable) {

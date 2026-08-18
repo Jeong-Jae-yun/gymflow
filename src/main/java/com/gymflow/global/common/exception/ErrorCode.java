@@ -14,6 +14,7 @@ public enum ErrorCode {
     RESERVATION_POLICY_NOT_FOUND(HttpStatus.NOT_FOUND, "Resource에 설정된 예약 정책이 없습니다."),
     INVALID_RESERVATION_DURATION(HttpStatus.BAD_REQUEST, "예약 시간이 허용된 범위를 벗어났습니다."),
     RESERVATION_TIME_CONFLICT(HttpStatus.CONFLICT, "이미 예약된 시간과 겹칩니다."),
+    RESERVATION_IN_PROGRESS(HttpStatus.CONFLICT, "해당 시간대의 예약 요청이 처리 중입니다."),
     RESERVATION_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 예약입니다."),
     RESERVATION_NOT_CANCELLABLE(HttpStatus.CONFLICT, "취소할 수 없는 예약 상태입니다."),
     RESERVATION_NOT_EXTENDABLE(HttpStatus.CONFLICT, "연장할 수 없는 예약 상태입니다."),

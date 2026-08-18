@@ -3,6 +3,7 @@ package com.gymflow.domain.reservation.service;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
+import com.gymflow.domain.reservation.domain.redis.ReservationLockRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
@@ -50,6 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -72,6 +74,9 @@ class ReservationServiceTest {
     @Mock
     private UsageHistoryRepository usageHistoryRepository;
 
+    @Mock
+    private ReservationLockRepository reservationLockRepository;
+
     @InjectMocks
     private ReservationService reservationService;
 
@@ -81,6 +86,10 @@ class ReservationServiceTest {
         Authentication authentication =
                 new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
         SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        // createReservation을 다루지 않는 테스트에서는 사용되지 않으므로 lenient로 등록한다
+        lenient().when(reservationLockRepository.tryLock(any(), any(), any()))
+                .thenReturn(Optional.of("lock-token"));
     }
 
     @AfterEach
@@ -158,6 +167,8 @@ class ReservationServiceTest {
         assertThat(response.resourceId()).isEqualTo(RESOURCE_ID);
         assertThat(response.startAt()).isEqualTo(startAt);
         assertThat(response.endAt()).isEqualTo(startAt.plusMinutes(30));
+        verify(reservationLockRepository).tryLock(RESOURCE_ID, startAt, startAt.plusMinutes(30));
+        verify(reservationLockRepository).unlock(RESOURCE_ID, startAt, startAt.plusMinutes(30), "lock-token");
     }
 
     @Test
@@ -267,6 +278,49 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_TIME_CONFLICT);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
+        // existsOverlapping이 실제 충돌을 판단했더라도 Lock은 finally에서 반드시 해제되어야 한다
+        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+    }
+
+    @Test
+    @DisplayName("Lock 획득에 실패하면 RESERVATION_IN_PROGRESS 예외가 발생하고 Reservation이 생성되지 않는다")
+    void createReservation_WithLockAcquisitionFailure_ShouldThrowReservationInProgress() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        ReservationCreateRequest request =
+                new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationLockRepository.tryLock(any(), any(), any())).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.createReservation(request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
+
+        verify(reservationRepository, never()).existsOverlapping(any(), any(), any(), any());
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
+        verify(reservationLockRepository, never()).unlock(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Reservation 저장 중 예외가 발생해도 finally에서 Lock이 해제된다")
+    void createReservation_WithExceptionDuringSave_ShouldStillReleaseLock() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        ReservationCreateRequest request =
+                new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        when(reservationRepository.save(any(Reservation.class))).thenThrow(new RuntimeException("DB 오류"));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.createReservation(request))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
     }
 
     @Test
