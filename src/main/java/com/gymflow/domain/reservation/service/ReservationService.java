@@ -3,6 +3,7 @@ package com.gymflow.domain.reservation.service;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.domain.redis.ReservationLockRepository;
+import com.gymflow.domain.reservation.domain.redis.ReservationNoShowRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
@@ -21,6 +22,7 @@ import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
 import com.gymflow.global.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -30,6 +32,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -40,6 +43,7 @@ public class ReservationService {
     private final UserRepository userRepository;
     private final UsageHistoryRepository usageHistoryRepository;
     private final ReservationLockRepository reservationLockRepository;
+    private final ReservationNoShowRepository reservationNoShowRepository;
 
     @Transactional
     public ReservationResponse createReservation(ReservationCreateRequest request) {
@@ -87,6 +91,8 @@ public class ReservationService {
 
             Reservation savedReservation = reservationRepository.save(reservation);
 
+            registerNoShowKey(savedReservation.getId(), startAt);
+
             return ReservationMapper.toResponse(savedReservation);
         } finally {
             reservationLockRepository.unlock(resource.getId(), startAt, endAt, lockToken);
@@ -121,6 +127,7 @@ public class ReservationService {
         }
 
         reservation.cancel(request.cancelReason());
+        removeNoShowKey(reservation.getId());
 
         return ReservationMapper.toResponse(reservation);
     }
@@ -183,6 +190,7 @@ public class ReservationService {
         }
 
         reservation.checkIn();
+        removeNoShowKey(reservation.getId());
 
         return ReservationMapper.toResponse(reservation);
     }
@@ -230,5 +238,35 @@ public class ReservationService {
         reservation.expire(LocalDateTime.now());
 
         return ReservationMapper.toResponse(reservation);
+    }
+
+    @Transactional
+    public void handleNoShowExpiration(Long reservationId) {
+        reservationRepository.findById(reservationId).ifPresent(reservation -> {
+            if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
+                reservation.noShow(LocalDateTime.now());
+            }
+        });
+    }
+
+    private void registerNoShowKey(Long reservationId, LocalDateTime startAt) {
+        Duration ttl = Duration.between(LocalDateTime.now(), startAt.plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES));
+        if (ttl.isZero() || ttl.isNegative()) {
+            log.warn("NO_SHOW 가능 시점이 이미 지나 Redis Key를 등록하지 않습니다. reservationId={}", reservationId);
+            return;
+        }
+        try {
+            reservationNoShowRepository.register(reservationId, ttl);
+        } catch (RuntimeException e) {
+            log.error("Redis NO_SHOW Key 등록에 실패했습니다. reservationId={}", reservationId, e);
+        }
+    }
+
+    private void removeNoShowKey(Long reservationId) {
+        try {
+            reservationNoShowRepository.remove(reservationId);
+        } catch (RuntimeException e) {
+            log.error("Redis NO_SHOW Key 삭제에 실패했습니다. reservationId={}", reservationId, e);
+        }
     }
 }

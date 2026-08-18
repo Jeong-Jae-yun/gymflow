@@ -4,6 +4,7 @@ import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.domain.redis.ReservationLockRepository;
+import com.gymflow.domain.reservation.domain.redis.ReservationNoShowRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
@@ -37,19 +38,23 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -76,6 +81,9 @@ class ReservationServiceTest {
 
     @Mock
     private ReservationLockRepository reservationLockRepository;
+
+    @Mock
+    private ReservationNoShowRepository reservationNoShowRepository;
 
     @InjectMocks
     private ReservationService reservationService;
@@ -324,6 +332,97 @@ class ReservationServiceTest {
     }
 
     @Test
+    @DisplayName("Reservation 생성 성공 후 NO_SHOW Redis Key가 등록된다")
+    void createReservation_WithValidRequest_ShouldRegisterNoShowKey() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        reservationService.createReservation(request);
+
+        // then
+        verify(reservationNoShowRepository).register(eq(100L), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("NO_SHOW Redis TTL은 startAt + 5분을 기준으로 계산된다")
+    void createReservation_ShouldCalculateNoShowTtlFromStartAtPlusGracePeriod() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        reservationService.createReservation(request);
+
+        // then
+        ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
+        verify(reservationNoShowRepository).register(eq(100L), ttlCaptor.capture());
+        Duration expectedTtl = Duration.between(
+                LocalDateTime.now(), startAt.plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES));
+        // 계산 시점(now())의 미세한 차이를 감안해 1초 오차까지 허용한다
+        assertThat(ttlCaptor.getValue().minus(expectedTtl).abs()).isLessThan(Duration.ofSeconds(1));
+    }
+
+    @Test
+    @DisplayName("NO_SHOW 가능 시점이 이미 지난 경우(TTL<=0) Redis Key를 등록하지 않는다")
+    void createReservation_WithPastStartAt_ShouldNotRegisterNoShowKey() {
+        // given: startAt이 과거이므로 (startAt + 5분) - now는 음수(TTL<=0)가 된다
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        ReservationResponse response = reservationService.createReservation(request);
+
+        // then: Redis 등록 없이도 Reservation 생성 자체는 정상 성공한다
+        assertThat(response.reservationId()).isEqualTo(100L);
+        verify(reservationNoShowRepository, never()).register(any(), any());
+    }
+
+    @Test
+    @DisplayName("NO_SHOW Redis 등록이 실패해도 Reservation 생성은 성공하고 Lock도 정상 해제된다")
+    void createReservation_WithNoShowRegistrationFailure_ShouldStillSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+        doThrow(new RedisConnectionFailureException("연결 실패"))
+                .when(reservationNoShowRepository).register(any(), any());
+
+        // when
+        ReservationResponse response = reservationService.createReservation(request);
+
+        // then: Redis 장애와 무관하게 예약 생성은 성공하고, Lock 역시 정상적으로 해제된다
+        // (Lock과 NO_SHOW Redis는 서로 다른 컴포넌트로 분리되어 있어 서로 영향을 주지 않는다)
+        assertThat(response.reservationId()).isEqualTo(100L);
+        assertThat(response.status()).isEqualTo(ReservationStatus.CONFIRMED);
+        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+    }
+
+    @Test
     @DisplayName("예약 생성 시 reservationBatchId는 UUID로 생성된다")
     void createReservation_ShouldGenerateUuidReservationBatchId() {
         // given
@@ -466,6 +565,25 @@ class ReservationServiceTest {
         assertThat(response.reservationId()).isEqualTo(100L);
         assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(response.cancelReason()).isEqualTo(CancelReason.SCHEDULE_CHANGE);
+        verify(reservationNoShowRepository).remove(100L);
+    }
+
+    @Test
+    @DisplayName("NO_SHOW Redis Key 삭제가 실패해도 CANCEL 자체는 성공한다")
+    void cancelReservation_WithNoShowKeyRemovalFailure_ShouldStillSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        doThrow(new RedisConnectionFailureException("연결 실패")).when(reservationNoShowRepository).remove(100L);
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.SCHEDULE_CHANGE);
+
+        // when
+        ReservationResponse response = reservationService.cancelReservation(100L, request);
+
+        // then: MySQL 상태 변경(source of truth)은 Redis 장애와 무관하게 성공한다
+        assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED);
     }
 
     @Test
@@ -763,6 +881,24 @@ class ReservationServiceTest {
         // then
         assertThat(response.status()).isEqualTo(ReservationStatus.CHECKED_IN);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+        verify(reservationNoShowRepository).remove(100L);
+    }
+
+    @Test
+    @DisplayName("NO_SHOW Redis Key 삭제가 실패해도 CHECK_IN 자체는 성공한다")
+    void checkInReservation_WithNoShowKeyRemovalFailure_ShouldStillSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        doThrow(new RedisConnectionFailureException("연결 실패")).when(reservationNoShowRepository).remove(100L);
+
+        // when
+        ReservationResponse response = reservationService.checkInReservation(100L);
+
+        // then: MySQL 상태 변경(source of truth)은 Redis 장애와 무관하게 성공한다
+        assertThat(response.status()).isEqualTo(ReservationStatus.CHECKED_IN);
     }
 
     @Test
@@ -1025,5 +1161,52 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.expire(100L))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("handleNoShowExpiration: CONFIRMED 상태의 예약은 NO_SHOW로 전이된다")
+    void handleNoShowExpiration_WithConfirmedReservation_ShouldBecomeNoShow() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(10);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(15));
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        // when
+        reservationService.handleNoShowExpiration(100L);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+    @DisplayName("handleNoShowExpiration: CONFIRMED가 아닌 예약은 상태가 바뀌지 않는다")
+    void handleNoShowExpiration_WithNonConfirmedReservation_ShouldNotChangeStatus(ReservationStatus status) {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(10);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(15));
+        ReflectionTestUtils.setField(reservation, "status", status);
+        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
+
+        // when
+        reservationService.handleNoShowExpiration(100L);
+
+        // then: 이미 CHECK_IN 등으로 전이된 경우(TTL 만료 전 처리했지만 Redis Key 삭제가
+        // 실패했을 수 있는 상황 포함) noShow()를 호출하지 않고 상태를 그대로 유지한다
+        assertThat(reservation.getStatus()).isEqualTo(status);
+    }
+
+    @Test
+    @DisplayName("handleNoShowExpiration: 존재하지 않는 예약이면 예외 없이 안전하게 종료된다")
+    void handleNoShowExpiration_WithNonExistentReservation_ShouldNotThrow() {
+        // given
+        when(reservationRepository.findById(999L)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatCode(() -> reservationService.handleNoShowExpiration(999L))
+                .doesNotThrowAnyException();
     }
 }
