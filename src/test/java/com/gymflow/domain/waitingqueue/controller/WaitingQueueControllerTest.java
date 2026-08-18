@@ -52,7 +52,8 @@ class WaitingQueueControllerTest {
                 LocalDateTime.of(2026, 8, 12, 14, 0),
                 LocalDateTime.of(2026, 8, 12, 14, 15),
                 WaitingQueueStatus.WAITING,
-                LocalDateTime.of(2026, 8, 12, 10, 0)
+                LocalDateTime.of(2026, 8, 12, 10, 0),
+                2L
         );
     }
 
@@ -72,7 +73,8 @@ class WaitingQueueControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.waitingQueueId").value(100L))
                 .andExpect(jsonPath("$.resourceId").value(10L))
-                .andExpect(jsonPath("$.status").value("WAITING"));
+                .andExpect(jsonPath("$.status").value("WAITING"))
+                .andExpect(jsonPath("$.waitingRank").value(2));
     }
 
     @Test

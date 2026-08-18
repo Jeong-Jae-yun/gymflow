@@ -9,6 +9,7 @@ import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueueRepository;
 import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
 import com.gymflow.domain.waitingqueue.dto.response.WaitingQueueResponse;
@@ -17,6 +18,7 @@ import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
 import com.gymflow.global.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -24,15 +26,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class  WaitingQueueService {
+public class WaitingQueueService {
 
     private final WaitingQueueRepository waitingQueueRepository;
     private final ResourceRepository resourceRepository;
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
+    private final WaitingQueueRedisRepository waitingQueueRedisRepository;
 
     @Transactional
     public WaitingQueueResponse registerWaitingQueue(WaitingQueueCreateRequest request) {
@@ -74,14 +78,16 @@ public class  WaitingQueueService {
 
         WaitingQueue savedWaitingQueue = waitingQueueRepository.save(waitingQueue);
 
-        return WaitingQueueMapper.toResponse(savedWaitingQueue);
+        Long waitingRank = registerToRedisAndGetRank(savedWaitingQueue);
+
+        return WaitingQueueMapper.toResponse(savedWaitingQueue, waitingRank);
     }
 
     public Page<WaitingQueueResponse> getMyWaitingQueues(Pageable pageable) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
 
         return waitingQueueRepository.findAllByUserId(currentUserId, pageable)
-                .map(WaitingQueueMapper::toResponse);
+                .map(this::toResponseWithRank);
     }
 
     @Transactional
@@ -96,5 +102,52 @@ public class  WaitingQueueService {
         }
 
         waitingQueue.cancel();
+        removeFromRedis(waitingQueue);
+    }
+
+    /*
+     * MySQL 저장은 이미 현재 트랜잭션에 반영되었으므로, Redis 등록이 실패했다고 해서
+     * 예외를 던져 트랜잭션 전체를 롤백시키지 않는다. 이 단계의 Redis Sorted Set은
+     * 대기 순번 조회를 보조하는 데이터일 뿐 예약 도메인의 source of truth가 아니므로,
+     * 분산 트랜잭션/Lua Script 없이 "로그를 남기고 waitingRank는 null로 응답"하는 것이
+     * 현재 수준에서 가장 안전한 절충안이다.
+     */
+    private Long registerToRedisAndGetRank(WaitingQueue waitingQueue) {
+        Long resourceId = waitingQueue.getResource().getId();
+        LocalDateTime startAt = waitingQueue.getStartAt();
+        try {
+            waitingQueueRedisRepository.add(
+                    waitingQueue.getId(), resourceId, startAt, waitingQueue.getCreatedAt());
+            return waitingQueueRedisRepository.rank(waitingQueue.getId(), resourceId, startAt)
+                    .map(rank -> rank + 1)
+                    .orElse(null);
+        } catch (RuntimeException e) {
+            log.error("Redis 대기열 등록에 실패했습니다. waitingQueueId={}", waitingQueue.getId(), e);
+            return null;
+        }
+    }
+
+    private void removeFromRedis(WaitingQueue waitingQueue) {
+        try {
+            waitingQueueRedisRepository.remove(
+                    waitingQueue.getId(), waitingQueue.getResource().getId(), waitingQueue.getStartAt());
+        } catch (RuntimeException e) {
+            log.error("Redis 대기열 제거에 실패했습니다. waitingQueueId={}", waitingQueue.getId(), e);
+        }
+    }
+
+    private WaitingQueueResponse toResponseWithRank(WaitingQueue waitingQueue) {
+        Long waitingRank = null;
+        if (waitingQueue.getStatus() == WaitingQueueStatus.WAITING) {
+            try {
+                waitingRank = waitingQueueRedisRepository.rank(
+                                waitingQueue.getId(), waitingQueue.getResource().getId(), waitingQueue.getStartAt())
+                        .map(rank -> rank + 1)
+                        .orElse(null);
+            } catch (RuntimeException e) {
+                log.error("Redis 대기 순번 조회에 실패했습니다. waitingQueueId={}", waitingQueue.getId(), e);
+            }
+        }
+        return WaitingQueueMapper.toResponse(waitingQueue, waitingRank);
     }
 }

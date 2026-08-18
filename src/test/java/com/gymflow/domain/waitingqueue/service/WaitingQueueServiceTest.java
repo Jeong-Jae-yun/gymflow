@@ -11,6 +11,7 @@ import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueueRepository;
 import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
 import com.gymflow.domain.waitingqueue.dto.response.WaitingQueueResponse;
@@ -30,6 +31,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -43,6 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -66,6 +69,9 @@ class WaitingQueueServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private WaitingQueueRedisRepository waitingQueueRedisRepository;
 
     @InjectMocks
     private WaitingQueueService waitingQueueService;
@@ -140,6 +146,8 @@ class WaitingQueueServiceTest {
         stubNoDuplicateAndUnavailable();
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
+        when(waitingQueueRedisRepository.rank(eq(100L), eq(RESOURCE_ID), eq(START_AT)))
+                .thenReturn(Optional.of(1L));
 
         // when
         WaitingQueueResponse response = waitingQueueService.registerWaitingQueue(request);
@@ -150,6 +158,30 @@ class WaitingQueueServiceTest {
         assertThat(response.startAt()).isEqualTo(START_AT);
         assertThat(response.endAt()).isEqualTo(END_AT);
         assertThat(response.status()).isEqualTo(WaitingQueueStatus.WAITING);
+        assertThat(response.waitingRank()).isEqualTo(2L);
+        verify(waitingQueueRedisRepository).add(eq(100L), eq(RESOURCE_ID), eq(START_AT), any());
+    }
+
+    @Test
+    @DisplayName("Redis 등록이 실패해도 MySQL 저장은 유지되고 waitingRank는 null로 응답한다")
+    void registerWaitingQueue_WithRedisFailure_ShouldStillSucceedWithNullRank() {
+        // given
+        Resource resource = activeResource();
+        WaitingQueueCreateRequest request = new WaitingQueueCreateRequest(RESOURCE_ID, START_AT, END_AT);
+        when(resourceRepository.findById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        stubNoDuplicateAndUnavailable();
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+        doThrow(new RedisConnectionFailureException("연결 실패"))
+                .when(waitingQueueRedisRepository).add(eq(100L), eq(RESOURCE_ID), eq(START_AT), any());
+
+        // when
+        WaitingQueueResponse response = waitingQueueService.registerWaitingQueue(request);
+
+        // then
+        assertThat(response.waitingQueueId()).isEqualTo(100L);
+        assertThat(response.waitingRank()).isNull();
+        verify(waitingQueueRepository).save(any(WaitingQueue.class));
     }
 
     @Test
@@ -250,6 +282,8 @@ class WaitingQueueServiceTest {
         Pageable pageable = PageRequest.of(0, 10);
         Page<WaitingQueue> page = new PageImpl<>(List.of(waitingQueue), pageable, 1);
         when(waitingQueueRepository.findAllByUserId(CURRENT_USER_ID, pageable)).thenReturn(page);
+        when(waitingQueueRedisRepository.rank(eq(100L), eq(RESOURCE_ID), eq(START_AT)))
+                .thenReturn(Optional.of(2L));
 
         // when
         Page<WaitingQueueResponse> response = waitingQueueService.getMyWaitingQueues(pageable);
@@ -258,6 +292,7 @@ class WaitingQueueServiceTest {
         assertThat(response.getTotalElements()).isEqualTo(1);
         assertThat(response.getContent().get(0).waitingQueueId()).isEqualTo(100L);
         assertThat(response.getContent().get(0).resourceId()).isEqualTo(RESOURCE_ID);
+        assertThat(response.getContent().get(0).waitingRank()).isEqualTo(3L);
         verify(waitingQueueRepository).findAllByUserId(CURRENT_USER_ID, pageable);
     }
 
@@ -289,6 +324,7 @@ class WaitingQueueServiceTest {
 
         // then
         assertThat(waitingQueue.getStatus()).isEqualTo(WaitingQueueStatus.CANCELLED);
+        verify(waitingQueueRedisRepository).remove(100L, RESOURCE_ID, START_AT);
     }
 
     @Test

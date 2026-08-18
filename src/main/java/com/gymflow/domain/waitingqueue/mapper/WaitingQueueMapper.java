@@ -8,14 +8,15 @@ public final class WaitingQueueMapper {
     private WaitingQueueMapper() {
     }
 
-    public static WaitingQueueResponse toResponse(WaitingQueue waitingQueue) {
+    public static WaitingQueueResponse toResponse(WaitingQueue waitingQueue, Long waitingRank) {
         return new WaitingQueueResponse(
                 waitingQueue.getId(),
                 waitingQueue.getResource().getId(),
                 waitingQueue.getStartAt(),
                 waitingQueue.getEndAt(),
                 waitingQueue.getStatus(),
-                waitingQueue.getCreatedAt()
+                waitingQueue.getCreatedAt(),
+                waitingRank
         );
     }
 }

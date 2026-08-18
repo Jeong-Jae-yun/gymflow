@@ -10,6 +10,7 @@ public record WaitingQueueResponse(
         LocalDateTime startAt,
         LocalDateTime endAt,
         WaitingQueueStatus status,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        Long waitingRank
 ) {
 }
