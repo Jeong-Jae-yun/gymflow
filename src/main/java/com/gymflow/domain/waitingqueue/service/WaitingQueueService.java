@@ -9,6 +9,8 @@ import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueEventPublisher;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueuePromotedEvent;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueueRepository;
 import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
@@ -37,6 +39,7 @@ public class WaitingQueueService {
     private final ReservationRepository reservationRepository;
     private final UserRepository userRepository;
     private final WaitingQueueRedisRepository waitingQueueRedisRepository;
+    private final WaitingQueueEventPublisher waitingQueueEventPublisher;
 
     @Transactional
     public WaitingQueueResponse registerWaitingQueue(WaitingQueueCreateRequest request) {
@@ -103,6 +106,34 @@ public class WaitingQueueService {
 
         waitingQueue.cancel();
         removeFromRedis(waitingQueue);
+    }
+
+    @Transactional
+    public void promoteWaitingQueue(Long waitingQueueId) {
+        WaitingQueue waitingQueue = waitingQueueRepository.findById(waitingQueueId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAITING_QUEUE_NOT_FOUND));
+
+        if (waitingQueue.getStatus() != WaitingQueueStatus.WAITING) {
+            throw new BusinessException(ErrorCode.WAITING_QUEUE_NOT_PROMOTABLE);
+        }
+
+        waitingQueue.promote();
+        publishPromotedEvent(waitingQueue);
+    }
+
+    private void publishPromotedEvent(WaitingQueue waitingQueue) {
+        WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(
+                waitingQueue.getId(),
+                waitingQueue.getUser().getId(),
+                waitingQueue.getResource().getId(),
+                waitingQueue.getStartAt(),
+                waitingQueue.getEndAt(),
+                LocalDateTime.now());
+        try {
+            waitingQueueEventPublisher.publish(event);
+        } catch (RuntimeException e) {
+            log.warn("WaitingQueue 승급 이벤트 발행에 실패했습니다. waitingQueueId={}", waitingQueue.getId(), e);
+        }
     }
 
     private Long registerToRedisAndGetRank(WaitingQueue waitingQueue) {
