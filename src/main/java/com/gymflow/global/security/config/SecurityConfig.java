@@ -23,7 +23,8 @@ public class SecurityConfig {
 
     private static final String[] PUBLIC_ENDPOINTS = {
             "/api/users/signup",
-            "/api/auth/login"
+            "/api/auth/login",
+            "/ws/**"
     };
 
     private final JwtTokenProvider jwtTokenProvider;
