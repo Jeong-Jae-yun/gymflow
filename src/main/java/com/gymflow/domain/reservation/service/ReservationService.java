@@ -273,12 +273,6 @@ public class ReservationService {
         }
     }
 
-    /*
-     * MySQL Reservation 저장이 성공한 뒤에만 호출되므로, 여기서 Ranking 점수가 증가하면
-     * 곧 "예약 생성 성공 횟수"를 의미한다. Ranking은 인기 Resource 조회를 위한 보조 데이터일
-     * 뿐 예약 도메인의 source of truth가 아니므로, 증가에 실패해도 로그만 남기고 예약 생성
-     * 응답은 그대로 성공 처리한다(fail-open). Distributed Lock의 fail-closed와는 원칙이 다르다.
-     */
     private void incrementResourceRanking(Long resourceId) {
         try {
             resourceRankingRedisRepository.incrementReservationCount(resourceId);
