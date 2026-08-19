@@ -14,6 +14,7 @@ import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
+import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.usagehistory.domain.entity.UsageHistory;
 import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
@@ -84,6 +85,9 @@ class ReservationServiceTest {
 
     @Mock
     private ReservationNoShowRepository reservationNoShowRepository;
+
+    @Mock
+    private ResourceRankingRedisRepository resourceRankingRedisRepository;
 
     @InjectMocks
     private ReservationService reservationService;
@@ -420,6 +424,88 @@ class ReservationServiceTest {
         assertThat(response.reservationId()).isEqualTo(100L);
         assertThat(response.status()).isEqualTo(ReservationStatus.CONFIRMED);
         verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+    }
+
+    @Test
+    @DisplayName("Reservation 저장이 성공하면 Resource Ranking score가 증가한다")
+    void createReservation_WithValidRequest_ShouldIncrementResourceRanking() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        ReservationCreateRequest request =
+                new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        reservationService.createReservation(request);
+
+        // then
+        verify(resourceRankingRedisRepository).incrementReservationCount(RESOURCE_ID);
+    }
+
+    @Test
+    @DisplayName("Resource Ranking 증가가 실패해도 Reservation 생성은 성공한다")
+    void createReservation_WithRankingIncrementFailure_ShouldStillSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        ReservationCreateRequest request =
+                new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+        doThrow(new RedisConnectionFailureException("연결 실패"))
+                .when(resourceRankingRedisRepository).incrementReservationCount(RESOURCE_ID);
+
+        // when
+        ReservationResponse response = reservationService.createReservation(request);
+
+        // then: Ranking Redis 장애와 무관하게 예약 생성은 성공한다
+        assertThat(response.reservationId()).isEqualTo(100L);
+        assertThat(response.status()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("Reservation 저장이 실패하면 Resource Ranking은 증가하지 않는다")
+    void createReservation_WithSaveFailure_ShouldNotIncrementResourceRanking() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        ReservationCreateRequest request =
+                new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        when(reservationRepository.save(any(Reservation.class))).thenThrow(new RuntimeException("DB 오류"));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.createReservation(request))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(resourceRankingRedisRepository, never()).incrementReservationCount(any());
+    }
+
+    @Test
+    @DisplayName("Lock 획득에 실패하면 Reservation 저장과 Resource Ranking 증가 모두 일어나지 않는다")
+    void createReservation_WithLockFailure_ShouldNotIncrementResourceRanking() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        ReservationCreateRequest request =
+                new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationLockRepository.tryLock(any(), any(), any())).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.createReservation(request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
+
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(resourceRankingRedisRepository, never()).incrementReservationCount(any());
     }
 
     @Test

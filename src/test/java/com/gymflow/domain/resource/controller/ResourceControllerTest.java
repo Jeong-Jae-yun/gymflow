@@ -2,6 +2,7 @@ package com.gymflow.domain.resource.controller;
 
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
+import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
 import com.gymflow.domain.resource.dto.response.ReservationPolicySummaryResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
 import com.gymflow.domain.resource.service.ResourceService;
@@ -20,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -88,5 +90,36 @@ class ResourceControllerTest {
         mockMvc.perform(get("/api/resources/{resourceId}", 999L))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.message").value(ErrorCode.RESOURCE_NOT_FOUND.getMessage()));
+    }
+
+    @Test
+    @DisplayName("인기 Resource 조회는 200 OK와 순위가 매겨진 목록을 반환한다")
+    void getPopularResources_ShouldReturnOkWithRankedList() throws Exception {
+        // given
+        when(resourceService.getPopularResources(anyInt())).thenReturn(List.of(
+                new PopularResourceResponse(101L, 37L, 1),
+                new PopularResourceResponse(102L, 25L, 2)));
+
+        // when & then
+        mockMvc.perform(get("/api/resources/popular"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].resourceId").value(101L))
+                .andExpect(jsonPath("$[0].reservationCount").value(37))
+                .andExpect(jsonPath("$[0].rank").value(1))
+                .andExpect(jsonPath("$[1].resourceId").value(102L))
+                .andExpect(jsonPath("$[1].rank").value(2));
+    }
+
+    @Test
+    @DisplayName("인기 Resource가 없으면 빈 배열을 반환한다")
+    void getPopularResources_WithNoData_ShouldReturnEmptyArray() throws Exception {
+        // given
+        when(resourceService.getPopularResources(anyInt())).thenReturn(List.of());
+
+        // when & then
+        mockMvc.perform(get("/api/resources/popular"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$").isEmpty());
     }
 }

@@ -1,5 +1,6 @@
 package com.gymflow.domain.resource.controller;
 
+import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
 import com.gymflow.domain.resource.service.ResourceService;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +12,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/resources")
@@ -24,6 +28,13 @@ public class ResourceController {
     public ResponseEntity<Page<ResourceResponse>> getResources(
             @PageableDefault(sort = "id", direction = Sort.Direction.ASC) Pageable pageable) {
         Page<ResourceResponse> response = resourceService.getResources(pageable);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/popular")
+    public ResponseEntity<List<PopularResourceResponse>> getPopularResources(
+            @RequestParam(defaultValue = "10") int limit) {
+        List<PopularResourceResponse> response = resourceService.getPopularResources(limit);
         return ResponseEntity.ok(response);
     }
 

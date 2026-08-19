@@ -1,8 +1,12 @@
 package com.gymflow.domain.resource.service;
 
 import com.gymflow.domain.resource.domain.entity.Resource;
+import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
+import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
+import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository.RankedResource;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
 import com.gymflow.domain.resource.mapper.ResourceMapper;
 import com.gymflow.global.common.exception.BusinessException;
@@ -15,7 +19,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -27,6 +35,7 @@ public class ResourceService {
 
     private final ResourceRepository resourceRepository;
     private final ResourceCacheRepository resourceCacheRepository;
+    private final ResourceRankingRedisRepository resourceRankingRedisRepository;
 
     public Page<ResourceResponse> getResources(Pageable pageable) {
         return resourceRepository.findAll(pageable)
@@ -64,6 +73,37 @@ public class ResourceService {
             resourceCacheRepository.set(resourceId, response, RESOURCE_CACHE_TTL);
         } catch (RuntimeException e) {
             log.warn("Resource cache operation failed. resourceId={}", resourceId, e);
+        }
+    }
+
+    public List<PopularResourceResponse> getPopularResources(int limit) {
+        List<RankedResource> rankedResources = getTopResourcesFromRanking(limit);
+        if (rankedResources.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> resourceIds = rankedResources.stream().map(RankedResource::resourceId).toList();
+        Set<Long> activeResourceIds = resourceRepository.findAllById(resourceIds).stream()
+                .filter(resource -> resource.getStatus() == ResourceStatus.ACTIVE)
+                .map(Resource::getId)
+                .collect(Collectors.toSet());
+
+        List<PopularResourceResponse> popularResources = new ArrayList<>();
+        for (int i = 0; i < rankedResources.size(); i++) {
+            RankedResource ranked = rankedResources.get(i);
+            if (activeResourceIds.contains(ranked.resourceId())) {
+                popularResources.add(new PopularResourceResponse(ranked.resourceId(), ranked.score(), i + 1));
+            }
+        }
+        return popularResources;
+    }
+
+    private List<RankedResource> getTopResourcesFromRanking(int limit) {
+        try {
+            return resourceRankingRedisRepository.findTopResources(limit);
+        } catch (RuntimeException e) {
+            log.warn("Resource ranking operation failed.", e);
+            return List.of();
         }
     }
 }

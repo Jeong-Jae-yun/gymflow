@@ -5,7 +5,10 @@ import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
+import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
+import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository.RankedResource;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
 import com.gymflow.domain.resource.dto.response.ReservationPolicySummaryResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
 import com.gymflow.global.common.exception.BusinessException;
@@ -48,6 +51,9 @@ class ResourceServiceTest {
     @Mock
     private ResourceCacheRepository resourceCacheRepository;
 
+    @Mock
+    private ResourceRankingRedisRepository resourceRankingRedisRepository;
+
     @InjectMocks
     private ResourceService resourceService;
 
@@ -70,6 +76,17 @@ class ResourceServiceTest {
                 .minDuration(15)
                 .maxDuration(60)
                 .build();
+        return resource;
+    }
+
+    private Resource resourceWithIdAndStatus(Long id, ResourceStatus status) {
+        Resource resource = Resource.builder()
+                .name("Resource-" + id)
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+        ReflectionTestUtils.setField(resource, "id", id);
+        ReflectionTestUtils.setField(resource, "status", status);
         return resource;
     }
 
@@ -209,5 +226,96 @@ class ResourceServiceTest {
         assertThatThrownBy(() -> resourceService.getResourceDetail(RESOURCE_ID))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("Redis Ranking 순서대로 인기 Resource 목록을 순위와 함께 반환한다")
+    void getPopularResources_ShouldReturnResponsesOrderedByRank() {
+        // given
+        when(resourceRankingRedisRepository.findTopResources(3)).thenReturn(List.of(
+                new RankedResource(102L, 20L),
+                new RankedResource(103L, 15L),
+                new RankedResource(101L, 10L)));
+        when(resourceRepository.findAllById(List.of(102L, 103L, 101L))).thenReturn(List.of(
+                resourceWithIdAndStatus(101L, ResourceStatus.ACTIVE),
+                resourceWithIdAndStatus(102L, ResourceStatus.ACTIVE),
+                resourceWithIdAndStatus(103L, ResourceStatus.ACTIVE)));
+
+        // when
+        List<PopularResourceResponse> popularResources = resourceService.getPopularResources(3);
+
+        // then
+        assertThat(popularResources).containsExactly(
+                new PopularResourceResponse(102L, 20L, 1),
+                new PopularResourceResponse(103L, 15L, 2),
+                new PopularResourceResponse(101L, 10L, 3));
+    }
+
+    @Test
+    @DisplayName("INACTIVE Resource는 인기 목록에서 제외되고, 남은 Resource의 순위는 그대로 유지된다")
+    void getPopularResources_WithInactiveResource_ShouldExcludeItAndKeepOriginalRankForOthers() {
+        // given
+        when(resourceRankingRedisRepository.findTopResources(3)).thenReturn(List.of(
+                new RankedResource(102L, 20L),
+                new RankedResource(103L, 15L),
+                new RankedResource(101L, 10L)));
+        when(resourceRepository.findAllById(List.of(102L, 103L, 101L))).thenReturn(List.of(
+                resourceWithIdAndStatus(101L, ResourceStatus.ACTIVE),
+                resourceWithIdAndStatus(102L, ResourceStatus.INACTIVE),
+                resourceWithIdAndStatus(103L, ResourceStatus.ACTIVE)));
+
+        // when
+        List<PopularResourceResponse> popularResources = resourceService.getPopularResources(3);
+
+        // then: 2위(102)는 제외되고, 나머지는 원래 순위(2위->유지 X, 3위->3 유지)를 그대로 갖는다
+        assertThat(popularResources).containsExactly(
+                new PopularResourceResponse(103L, 15L, 2),
+                new PopularResourceResponse(101L, 10L, 3));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 Resource는 인기 목록에서 제외된다")
+    void getPopularResources_WithDeletedResource_ShouldExcludeIt() {
+        // given
+        when(resourceRankingRedisRepository.findTopResources(2)).thenReturn(List.of(
+                new RankedResource(101L, 10L),
+                new RankedResource(999L, 5L)));
+        when(resourceRepository.findAllById(List.of(101L, 999L)))
+                .thenReturn(List.of(resourceWithIdAndStatus(101L, ResourceStatus.ACTIVE)));
+
+        // when
+        List<PopularResourceResponse> popularResources = resourceService.getPopularResources(2);
+
+        // then
+        assertThat(popularResources).containsExactly(new PopularResourceResponse(101L, 10L, 1));
+    }
+
+    @Test
+    @DisplayName("Redis Ranking 조회가 비어있으면 빈 목록을 반환하고 MySQL을 조회하지 않는다")
+    void getPopularResources_WithEmptyRanking_ShouldReturnEmptyListWithoutQueryingMySql() {
+        // given
+        when(resourceRankingRedisRepository.findTopResources(10)).thenReturn(List.of());
+
+        // when
+        List<PopularResourceResponse> popularResources = resourceService.getPopularResources(10);
+
+        // then
+        assertThat(popularResources).isEmpty();
+        verify(resourceRepository, never()).findAllById(any());
+    }
+
+    @Test
+    @DisplayName("Redis Ranking 조회가 실패하면 빈 목록을 반환한다")
+    void getPopularResources_WithRedisFailure_ShouldReturnEmptyList() {
+        // given
+        doThrow(new RedisConnectionFailureException("연결 실패"))
+                .when(resourceRankingRedisRepository).findTopResources(10);
+
+        // when
+        List<PopularResourceResponse> popularResources = resourceService.getPopularResources(10);
+
+        // then
+        assertThat(popularResources).isEmpty();
+        verify(resourceRepository, never()).findAllById(any());
     }
 }
