@@ -827,8 +827,4 @@ ADMIN
 
 Enum의 순서 변경에 따른 문제를 방지하고 가독성을 높이기 위함이다.
 
----
 
-# Next Document
-
-➡️ **02-3_ERD_Design.md**

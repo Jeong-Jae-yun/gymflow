@@ -7,7 +7,7 @@
 | Document | Domain Modeling |
 | Version | v1.0            |
 | Author | 정재윤             |
-| Last Updated | 2026-08-12      |
+| Last Updated | 2026-08-20      |
 
 ---
 

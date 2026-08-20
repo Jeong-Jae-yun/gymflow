@@ -11,7 +11,7 @@
 | Document | Project Overview |
 | Version | v1.0             |
 | Author | 정재윤              |
-| Last Updated | 2026-08-12       |
+| Last Updated | 2026-08-20       |
 ---
 
 # 1. 프로젝트 소개
