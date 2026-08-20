@@ -55,10 +55,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -166,7 +168,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -273,15 +275,17 @@ class ReservationServiceTest {
         verify(reservationRepository, never()).save(any(Reservation.class));
     }
 
-    @Test
-    @DisplayName("동일 Resource에 시간이 겹치는 CONFIRMED 예약이 있으면 예외가 발생한다")
-    void createReservation_WithOverlappingReservation_ShouldThrowException() {
-        // given
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class, names = {"CONFIRMED", "CHECKED_IN"})
+    @DisplayName("동일 Resource에 시간이 겹치는 CONFIRMED 또는 CHECKED_IN(점유 상태) 예약이 있으면 예외가 발생한다")
+    void createReservation_WithOverlappingOccupyingReservation_ShouldThrowException(ReservationStatus occupyingStatus) {
+        // given: existsOverlapping은 CONFIRMED+CHECKED_IN(OCCUPYING_STATUSES)을 대상으로 점유 여부를 조회하므로,
+        // 실제로 겹치는 예약이 occupyingStatus(CONFIRMED 또는 CHECKED_IN) 중 어느 쪽이든 동일하게 충돌로 처리되어야 한다
         Resource resource = activeResourceWithPolicy(15, 60);
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(true);
 
         // when & then
@@ -292,6 +296,28 @@ class ReservationServiceTest {
         verify(reservationRepository, never()).save(any(Reservation.class));
         // existsOverlapping이 실제 충돌을 판단했더라도 Lock은 finally에서 반드시 해제되어야 한다
         verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+    }
+
+    @Test
+    @DisplayName("점유 상태(CONFIRMED/CHECKED_IN)가 아닌 CANCELLED 예약과 시간이 겹쳐도 정상적으로 생성된다")
+    void createReservation_WithOverlappingCancelledReservation_ShouldSucceed() {
+        // given: existsOverlapping은 CANCELLED 등 비점유 상태를 대상에서 제외하므로 false를 반환한다
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        ReservationResponse response = reservationService.createReservation(request);
+
+        // then
+        assertThat(response.reservationId()).isEqualTo(100L);
+        verify(reservationRepository).existsOverlapping(
+                RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, startAt, startAt.plusMinutes(30));
     }
 
     @Test
@@ -309,7 +335,8 @@ class ReservationServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
 
-        verify(reservationRepository, never()).existsOverlapping(any(), any(), any(), any());
+        verify(reservationRepository, never())
+                .existsOverlapping(any(), anyCollection(), any(), any());
         verify(reservationRepository, never()).save(any(Reservation.class));
         // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
         verify(reservationLockRepository, never()).unlock(any(), any(), any(), any());
@@ -323,7 +350,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         when(reservationRepository.save(any(Reservation.class))).thenThrow(new RuntimeException("DB 오류"));
@@ -343,7 +370,7 @@ class ReservationServiceTest {
         LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
         ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -363,7 +390,7 @@ class ReservationServiceTest {
         LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
         ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -388,7 +415,7 @@ class ReservationServiceTest {
         LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
         ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -409,7 +436,7 @@ class ReservationServiceTest {
         LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
         ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -434,7 +461,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -454,7 +481,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -477,7 +504,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         when(reservationRepository.save(any(Reservation.class))).thenThrow(new RuntimeException("DB 오류"));
@@ -516,7 +543,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -538,7 +565,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any()))
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
                 .thenReturn(false);
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
@@ -766,16 +793,19 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("정상적인 연장 요청이면 endAt이 늘어나고 extensionCount가 증가한다")
+    @DisplayName("정상적인 연장 요청이면 Lock 획득→overlap 검사→extend→save→unlock 순서로 처리되고 endAt/extensionCount가 갱신된다")
     void extendReservation_WithValidRequest_ShouldSucceed() {
         // given
         Resource resource = activeResourceWithPolicy(15, 60);
-        Reservation reservation = reservation(100L, resource, user(),
-                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 14, 0);
+        LocalDateTime originalEndAt = LocalDateTime.of(2026, 8, 12, 14, 15);
+        LocalDateTime newEndAt = LocalDateTime.of(2026, 8, 12, 14, 30);
+        Reservation reservation = reservation(100L, resource, user(), startAt, originalEndAt);
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(reservationRepository.existsOverlappingExcludingReservation(
-                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
                 .thenReturn(false);
         ReservationExtensionRequest request = new ReservationExtensionRequest(15);
 
@@ -783,10 +813,16 @@ class ReservationServiceTest {
         ReservationResponse response = reservationService.extendReservation(100L, request);
 
         // then
-        assertThat(response.endAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+        assertThat(response.endAt()).isEqualTo(newEndAt);
         assertThat(response.extensionCount()).isEqualTo(1);
-        assertThat(reservation.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+        assertThat(reservation.getEndAt()).isEqualTo(newEndAt);
         assertThat(reservation.getExtensionCount()).isEqualTo(1);
+        // 기존 endAt(14:15)이 아니라 연장하려는 새로운 시간 구간(startAt~newEndAt)을 기준으로 Lock을 획득/해제해야 한다
+        verify(reservationLockRepository).tryLock(RESOURCE_ID, startAt, newEndAt);
+        verify(reservationRepository).existsOverlappingExcludingReservation(
+                RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, originalEndAt, newEndAt, 100L);
+        verify(reservationRepository).save(reservation);
+        verify(reservationLockRepository).unlock(RESOURCE_ID, startAt, newEndAt, "lock-token");
     }
 
     @Test
@@ -816,33 +852,10 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
     }
 
-    @Test
-    @DisplayName("CHECKED_IN 상태의 예약도 정상적으로 연장된다")
-    void extendReservation_WithCheckedInReservation_ShouldSucceed() {
-        // given
-        Resource resource = activeResourceWithPolicy(15, 60);
-        Reservation reservation = reservation(100L, resource, user(),
-                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
-        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
-        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
-        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlappingExcludingReservation(
-                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
-                .thenReturn(false);
-        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
-
-        // when
-        ReservationResponse response = reservationService.extendReservation(100L, request);
-
-        // then
-        assertThat(response.endAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
-        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
-    }
-
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"COMPLETED", "CANCELLED", "NO_SHOW"})
-    @DisplayName("CONFIRMED/CHECKED_IN이 아닌 상태의 예약은 연장할 수 없다")
+            names = {"CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"})
+    @DisplayName("CHECKED_IN이 아닌 상태의 예약은 연장할 수 없고 Lock을 획득하지 않는다")
     void extendReservation_WithNonExtendableStatus_ShouldThrowException(ReservationStatus status) {
         // given
         Resource resource = activeResourceWithPolicy(15, 60);
@@ -856,6 +869,8 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_EXTENDABLE);
+        verify(reservationLockRepository, never()).tryLock(any(), any(), any());
+        verify(reservationRepository, never()).save(any(Reservation.class));
     }
 
     @Test
@@ -866,6 +881,7 @@ class ReservationServiceTest {
         ReflectionTestUtils.setField(resource, "status", ResourceStatus.MAINTENANCE);
         Reservation reservation = reservation(100L, resource, user(),
                 LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         ReservationExtensionRequest request = new ReservationExtensionRequest(15);
@@ -877,12 +893,13 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("연장 후 총 이용시간이 maxDuration을 초과하면 예외가 발생한다")
+    @DisplayName("연장 후 총 이용시간이 maxDuration을 초과하면 예외가 발생하고 Lock을 획득하지 않는다")
     void extendReservation_WithTotalDurationExceedingMaxDuration_ShouldThrowException() {
         // given
         Resource resource = activeResourceWithPolicy(15, 60);
         Reservation reservation = reservation(100L, resource, user(),
                 LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 45));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         ReservationExtensionRequest request = new ReservationExtensionRequest(30);
@@ -891,15 +908,17 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_MAX_DURATION_EXCEEDED);
+        verify(reservationLockRepository, never()).tryLock(any(), any(), any());
     }
 
     @Test
-    @DisplayName("이미 2회 연장한 예약은 다시 연장할 수 없다")
+    @DisplayName("이미 2회 연장한 예약은 다시 연장할 수 없고 Lock을 획득하지 않는다")
     void extendReservation_WithExtensionCountAtLimit_ShouldThrowException() {
         // given
         Resource resource = activeResourceWithPolicy(15, 60);
         Reservation reservation = reservation(100L, resource, user(),
                 LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 15));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         ReflectionTestUtils.setField(reservation, "extensionCount", 2);
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
@@ -909,19 +928,50 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_EXTENSION_LIMIT_EXCEEDED);
+        verify(reservationLockRepository, never()).tryLock(any(), any(), any());
     }
 
     @Test
-    @DisplayName("연장하려는 시간대가 다른 예약과 겹치면 예외가 발생한다")
-    void extendReservation_WithOverlappingReservation_ShouldThrowException() {
+    @DisplayName("Lock 획득에 실패하면 RESERVATION_IN_PROGRESS 예외가 발생하고 연장되지 않는다")
+    void extendReservation_WithLockAcquisitionFailure_ShouldThrowReservationInProgress() {
         // given
         Resource resource = activeResourceWithPolicy(15, 60);
         Reservation reservation = reservation(100L, resource, user(),
                 LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationLockRepository.tryLock(any(), any(), any())).thenReturn(Optional.empty());
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
+
+        verify(reservationRepository, never())
+                .existsOverlappingExcludingReservation(any(), anyCollection(), any(), any(), any());
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        assertThat(reservation.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 15));
+        // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
+        verify(reservationLockRepository, never()).unlock(any(), any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class, names = {"CONFIRMED", "CHECKED_IN"})
+    @DisplayName("연장하려는 시간대가 다른 CONFIRMED 또는 CHECKED_IN(점유 상태) 예약과 겹치면 예외가 발생하고 저장되지 않으며 Lock은 해제된다")
+    void extendReservation_WithOverlappingOccupyingReservation_ShouldThrowException(ReservationStatus occupyingStatus) {
+        // given: existsOverlappingExcludingReservation은 CONFIRMED+CHECKED_IN(OCCUPYING_STATUSES)을 대상으로
+        // 자기 자신을 제외한 점유 여부를 조회하므로, 겹치는 다른 예약이 occupyingStatus 중 어느 쪽이든
+        // 동일하게 충돌로 처리되어야 한다
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(reservationRepository.existsOverlappingExcludingReservation(
-                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
                 .thenReturn(true);
         ReservationExtensionRequest request = new ReservationExtensionRequest(15);
 
@@ -929,6 +979,12 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_TIME_CONFLICT);
+
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+        assertThat(reservation.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 15));
+        // overlap 재검증으로 충돌이 확인되었더라도 Lock은 finally에서 반드시 해제되어야 한다
+        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
     }
 
     @Test
@@ -938,10 +994,11 @@ class ReservationServiceTest {
         Resource resource = activeResourceWithPolicy(15, 60);
         Reservation reservation = reservation(100L, resource, user(),
                 LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
         when(reservationRepository.existsOverlappingExcludingReservation(
-                eq(RESOURCE_ID), eq(ReservationStatus.CONFIRMED), any(), any(), eq(100L)))
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
                 .thenReturn(false);
         ReservationExtensionRequest request = new ReservationExtensionRequest(15);
 
@@ -950,6 +1007,53 @@ class ReservationServiceTest {
 
         // then
         assertThat(response.endAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+    }
+
+    @Test
+    @DisplayName("Reservation.extend()에서 예외가 발생해도 finally에서 Lock이 해제된다")
+    void extendReservation_WithDomainExtendFailure_ShouldStillReleaseLock() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = spy(reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15)));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        doThrow(new IllegalStateException("도메인 불변식 위반")).when(reservation).extend(any());
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
+                .thenReturn(false);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+    }
+
+    @Test
+    @DisplayName("연장 저장 중 예외가 발생해도 finally에서 Lock이 해제된다")
+    void extendReservation_WithExceptionDuringSave_ShouldStillReleaseLock() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 14, 0), LocalDateTime.of(2026, 8, 12, 14, 15));
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
+                .thenReturn(false);
+        when(reservationRepository.save(any(Reservation.class))).thenThrow(new RuntimeException("DB 오류"));
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
     }
 
     @Test

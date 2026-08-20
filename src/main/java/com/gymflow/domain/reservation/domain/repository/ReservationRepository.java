@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.Optional;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
@@ -36,6 +37,21 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
             select case when count(r) > 0 then true else false end
             from Reservation r
             where r.resource.id = :resourceId
+              and r.status in :statuses
+              and r.startAt < :endAt
+              and r.endAt > :startAt
+            """)
+    boolean existsOverlapping(
+            @Param("resourceId") Long resourceId,
+            @Param("statuses") Collection<ReservationStatus> statuses,
+            @Param("startAt") LocalDateTime startAt,
+            @Param("endAt") LocalDateTime endAt
+    );
+
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Reservation r
+            where r.resource.id = :resourceId
               and r.status = :status
               and r.id <> :reservationId
               and r.startAt < :endAt
@@ -44,6 +60,23 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     boolean existsOverlappingExcludingReservation(
             @Param("resourceId") Long resourceId,
             @Param("status") ReservationStatus status,
+            @Param("startAt") LocalDateTime startAt,
+            @Param("endAt") LocalDateTime endAt,
+            @Param("reservationId") Long reservationId
+    );
+
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Reservation r
+            where r.resource.id = :resourceId
+              and r.status in :statuses
+              and r.id <> :reservationId
+              and r.startAt < :endAt
+              and r.endAt > :startAt
+            """)
+    boolean existsOverlappingExcludingReservation(
+            @Param("resourceId") Long resourceId,
+            @Param("statuses") Collection<ReservationStatus> statuses,
             @Param("startAt") LocalDateTime startAt,
             @Param("endAt") LocalDateTime endAt,
             @Param("reservationId") Long reservationId

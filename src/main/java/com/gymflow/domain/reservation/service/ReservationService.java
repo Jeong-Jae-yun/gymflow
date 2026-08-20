@@ -76,7 +76,7 @@ public class ReservationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
         try {
             boolean hasConflict = reservationRepository.existsOverlapping(
-                    resource.getId(), ReservationStatus.CONFIRMED, startAt, endAt);
+                    resource.getId(), ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
             if (hasConflict) {
                 throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
             }
@@ -142,8 +142,7 @@ public class ReservationService {
         Reservation reservation = reservationRepository.findByIdAndUserId(reservationId, currentUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
 
-        if (reservation.getStatus() != ReservationStatus.CONFIRMED
-                && reservation.getStatus() != ReservationStatus.CHECKED_IN) {
+        if (reservation.getStatus() != ReservationStatus.CHECKED_IN) {
             throw new BusinessException(ErrorCode.RESERVATION_NOT_EXTENDABLE);
         }
 
@@ -170,15 +169,22 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.RESERVATION_MAX_DURATION_EXCEEDED);
         }
 
-        boolean hasConflict = reservationRepository.existsOverlappingExcludingReservation(
-                resource.getId(), ReservationStatus.CONFIRMED, reservation.getEndAt(), newEndAt, reservation.getId());
-        if (hasConflict) {
-            throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+        String lockToken = reservationLockRepository.tryLock(resource.getId(), reservation.getStartAt(), newEndAt)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+        try {
+            boolean hasConflict = reservationRepository.existsOverlappingExcludingReservation(
+                    resource.getId(), ReservationStatus.OCCUPYING_STATUSES, reservation.getEndAt(), newEndAt, reservation.getId());
+            if (hasConflict) {
+                throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+            }
+
+            reservation.extend(newEndAt);
+            reservationRepository.save(reservation);
+
+            return ReservationMapper.toResponse(reservation);
+        } finally {
+            reservationLockRepository.unlock(resource.getId(), reservation.getStartAt(), newEndAt, lockToken);
         }
-
-        reservation.extend(newEndAt);
-
-        return ReservationMapper.toResponse(reservation);
     }
 
     @Transactional

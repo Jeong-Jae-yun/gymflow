@@ -158,8 +158,8 @@ TimeSlot Value Object로 리팩터링할 수 있다.
 
 ### Business Rules
 
-- 동일한 Resource는 동일한 시간에 CONFIRMED 상태의 예약이 하나만 존재할 수 있다.
-- 예약 충돌 검사는 CONFIRMED 상태의 Reservation만을 대상으로 한다. CHECKED_IN 상태의 Reservation은 충돌 검사 대상에서 제외되며, 시간 구간이 종료된 CHECKED_IN 예약은 다음 시간대 예약을 막지 않는다.
+- 동일한 Resource는 동일한 시간에 점유 상태(CONFIRMED, CHECKED_IN)의 예약이 하나만 존재할 수 있다.
+- Resource의 예약 시간 충돌은 CONFIRMED 및 CHECKED_IN 상태의 Reservation을 모두 점유 상태로 간주하여 판단한다. CANCELLED, NO_SHOW, COMPLETED 상태의 Reservation은 충돌 검사 대상에서 제외된다.
 - 시간 구간이 정확히 맞닿는 예약(예: 14:00~14:15와 14:15~14:30)은 충돌로 보지 않는다.
 - 예약 생성 시 Resource는 예약 가능 상태여야 한다.
 - 예약 시간은 운영시간 내에 존재해야 한다.

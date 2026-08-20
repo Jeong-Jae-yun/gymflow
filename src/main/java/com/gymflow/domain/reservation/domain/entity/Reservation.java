@@ -131,8 +131,8 @@ public class Reservation extends BaseEntity {
     }
 
     public void extend(LocalDateTime newEndAt) {
-        if (status != ReservationStatus.CONFIRMED && status != ReservationStatus.CHECKED_IN) {
-            throw new IllegalStateException("CONFIRMED 또는 CHECKED_IN 상태의 예약만 연장할 수 있습니다.");
+        if (status != ReservationStatus.CHECKED_IN) {
+            throw new IllegalStateException("CHECKED_IN 상태의 예약만 연장할 수 있습니다.");
         }
         if (extensionCount >= MAX_EXTENSION_COUNT) {
             throw new IllegalStateException("최대 연장 횟수를 초과했습니다.");

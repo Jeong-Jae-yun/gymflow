@@ -323,25 +323,11 @@ class ReservationTest {
     }
 
     @Test
-    @DisplayName("CONFIRMED 상태의 Reservation은 정상적으로 연장된다")
-    void extend_WithConfirmedReservation_ShouldSucceed() {
-        // given
-        Reservation reservation = confirmedReservation();
-        LocalDateTime newEndAt = reservation.getEndAt().plusMinutes(15);
-
-        // when
-        reservation.extend(newEndAt);
-
-        // then
-        assertThat(reservation.getEndAt()).isEqualTo(newEndAt);
-        assertThat(reservation.getExtensionCount()).isEqualTo(1);
-    }
-
-    @Test
     @DisplayName("연장할 때마다 extensionCount가 1씩 증가한다")
     void extend_EachCall_ShouldIncrementExtensionCountByOne() {
         // given
         Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
 
         // when
         reservation.extend(reservation.getEndAt().plusMinutes(15));
@@ -356,6 +342,7 @@ class ReservationTest {
     void extend_UpToTwice_ShouldSucceed() {
         // given
         Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
 
         // when & then
         reservation.extend(reservation.getEndAt().plusMinutes(10));
@@ -369,6 +356,7 @@ class ReservationTest {
     void extend_ThirdTime_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         reservation.extend(reservation.getEndAt().plusMinutes(10));
         reservation.extend(reservation.getEndAt().plusMinutes(10));
 
@@ -410,8 +398,8 @@ class ReservationTest {
 
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"COMPLETED", "CANCELLED", "NO_SHOW"})
-    @DisplayName("CONFIRMED/CHECKED_IN이 아닌 상태의 Reservation은 연장할 수 없다")
+            names = {"CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"})
+    @DisplayName("CHECKED_IN이 아닌 상태의 Reservation은 연장할 수 없다")
     void extend_WithNonExtendableStatus_ShouldThrowException(ReservationStatus status) {
         // given
         Reservation reservation = confirmedReservation();
@@ -430,6 +418,7 @@ class ReservationTest {
     void extend_WithNewEndAtBeforeCurrentEndAt_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         LocalDateTime originalEndAt = reservation.getEndAt();
 
         // when & then
@@ -444,6 +433,7 @@ class ReservationTest {
     void extend_WithNewEndAtEqualToCurrentEndAt_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         LocalDateTime originalEndAt = reservation.getEndAt();
 
         // when & then
