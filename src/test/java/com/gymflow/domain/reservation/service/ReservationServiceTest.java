@@ -733,7 +733,7 @@ class ReservationServiceTest {
 
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"})
     @DisplayName("CONFIRMED가 아닌 상태의 예약은 취소할 수 없다")
     void cancelReservation_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
         // given
@@ -841,7 +841,7 @@ class ReservationServiceTest {
 
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+            names = {"COMPLETED", "CANCELLED", "NO_SHOW"})
     @DisplayName("CONFIRMED/CHECKED_IN이 아닌 상태의 예약은 연장할 수 없다")
     void extendReservation_WithNonExtendableStatus_ShouldThrowException(ReservationStatus status) {
         // given
@@ -1014,7 +1014,7 @@ class ReservationServiceTest {
 
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"})
     @DisplayName("CONFIRMED가 아닌 상태의 예약은 체크인할 수 없다")
     void checkInReservation_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
         // given
@@ -1125,7 +1125,7 @@ class ReservationServiceTest {
 
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+            names = {"CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"})
     @DisplayName("CHECKED_IN이 아닌 상태의 예약은 체크아웃할 수 없다")
     void checkOutReservation_WithNonCheckedInStatus_ShouldThrowException(ReservationStatus status) {
         // given
@@ -1204,52 +1204,6 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("종료 시각이 지난 CHECKED_IN 예약은 EXPIRED 처리된다")
-    void expire_WithEligibleReservation_ShouldSucceed() {
-        // given
-        Resource resource = activeResourceWithPolicy(15, 60);
-        LocalDateTime startAt = LocalDateTime.now().minusMinutes(30);
-        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(10));
-        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
-        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
-
-        // when
-        ReservationResponse response = reservationService.expire(100L);
-
-        // then
-        assertThat(response.status()).isEqualTo(ReservationStatus.EXPIRED);
-        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.EXPIRED);
-    }
-
-    @Test
-    @DisplayName("존재하지 않는 예약을 EXPIRED 처리하면 예외가 발생한다")
-    void expire_WithNonExistentReservation_ShouldThrowException() {
-        // given
-        when(reservationRepository.findById(999L)).thenReturn(Optional.empty());
-
-        // when & then
-        assertThatThrownBy(() -> reservationService.expire(999L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_FOUND);
-    }
-
-    @Test
-    @DisplayName("종료 시각이 지나지 않은 CHECKED_IN 예약을 EXPIRED 처리하면 예외가 발생한다")
-    void expire_BeforeEndAt_ShouldThrowException() {
-        // given
-        Resource resource = activeResourceWithPolicy(15, 60);
-        LocalDateTime startAt = LocalDateTime.now().minusMinutes(5);
-        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
-        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
-        when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
-
-        // when & then
-        assertThatThrownBy(() -> reservationService.expire(100L))
-                .isInstanceOf(IllegalStateException.class);
-        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
-    }
-
-    @Test
     @DisplayName("handleNoShowExpiration: CONFIRMED 상태의 예약은 NO_SHOW로 전이된다")
     void handleNoShowExpiration_WithConfirmedReservation_ShouldBecomeNoShow() {
         // given
@@ -1267,7 +1221,7 @@ class ReservationServiceTest {
 
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"})
     @DisplayName("handleNoShowExpiration: CONFIRMED가 아닌 예약은 상태가 바뀌지 않는다")
     void handleNoShowExpiration_WithNonConfirmedReservation_ShouldNotChangeStatus(ReservationStatus status) {
         // given

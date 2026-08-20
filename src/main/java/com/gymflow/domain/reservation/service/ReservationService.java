@@ -234,16 +234,6 @@ public class ReservationService {
     }
 
     @Transactional
-    public ReservationResponse expire(Long reservationId) {
-        Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
-
-        reservation.expire(LocalDateTime.now());
-
-        return ReservationMapper.toResponse(reservation);
-    }
-
-    @Transactional
     public void handleNoShowExpiration(Long reservationId) {
         reservationRepository.findById(reservationId).ifPresent(reservation -> {
             if (reservation.getStatus() == ReservationStatus.CONFIRMED) {

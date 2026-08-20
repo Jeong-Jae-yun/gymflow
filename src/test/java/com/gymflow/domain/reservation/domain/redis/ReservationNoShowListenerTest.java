@@ -125,7 +125,7 @@ class ReservationNoShowListenerTest {
 
     @ParameterizedTest
     @EnumSource(value = ReservationStatus.class,
-            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW", "EXPIRED"})
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"})
     @DisplayName("CONFIRMED가 아닌 상태의 Reservation은 TTL 만료 이벤트가 와도 상태가 바뀌지 않는다")
     void onMessage_WithNonConfirmedReservation_ShouldNotChangeStatus(ReservationStatus status) {
         // given

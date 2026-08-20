@@ -237,18 +237,10 @@ CONFIRMED
 
 NO_SHOW
 
-또는
-
-CHECKED_IN
-
-↓
-
-EXPIRED
-
 
 NO_SHOW는 예약 시작 시각(startAt)부터 5분의 유예시간 내에 체크인하지 않은 경우의 상태이다.
 
-EXPIRED는 체크인은 했지만 예약 종료 시각(endAt)까지 체크아웃하지 않은 경우의 상태이다.
+COMPLETED는 체크인 후 정상적으로 체크아웃을 완료한 경우의 상태이다.
 
 ---
 

@@ -173,15 +173,4 @@ public class Reservation extends BaseEntity {
 
         this.status = ReservationStatus.NO_SHOW;
     }
-
-    public void expire(LocalDateTime now) {
-        if (status != ReservationStatus.CHECKED_IN) {
-            throw new IllegalStateException("CHECKED_IN 상태의 예약만 만료 처리할 수 있습니다.");
-        }
-        if (now.isBefore(endAt)) {
-            throw new IllegalStateException("예약 종료 시각이 아직 지나지 않았습니다.");
-        }
-
-        this.status = ReservationStatus.EXPIRED;
-    }
 }
