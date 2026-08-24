@@ -137,9 +137,6 @@ public class PromotionService {
         LocalDateTime startAt = promotion.getStartAt();
         LocalDateTime endAt = promotion.getEndAt();
 
-        // Lock 획득 순서: PromotionLock(상위) → ReservationSlotLock(하위) 고정. 프로젝트 전체에서
-        // 이 순서를 역전시키지 않는다(tryPromote()도 동일 순서). PromotionLock은 Promotion 상태
-        // 전이를, ReservationSlotLock은 Resource 시간 점유권을 각각 보호하는 별개의 책임이다.
         String lockToken = promotionLockRepository.tryLock(resourceId, startAt, endAt)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
         try {
@@ -258,9 +255,6 @@ public class PromotionService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
         try {
             LocalDateTime deadline = promotion.getAcceptedAt().plus(CHECK_IN_TTL);
-            // deadline 초과는 서버 오류가 아닌 정상적인 비즈니스 실패이므로 Service에서 먼저
-            // BusinessException으로 변환해 API가 500이 아닌 409를 반환하도록 한다.
-            // Reservation.checkInByPromotion()의 동일한 시간 검증은 최종 방어선으로 유지한다.
             if (now.isAfter(deadline)) {
                 throw new BusinessException(ErrorCode.PROMOTION_CHECKIN_EXPIRED);
             }
@@ -311,13 +305,19 @@ public class PromotionService {
     }
 
     private WaitingQueue pollNextWaitingCandidate(Long resourceId, LocalDateTime startAt) {
-        List<Long> waitingQueueIds = waitingQueueRedisRepository.findAll(resourceId, startAt);
+        List<Long> waitingQueueIds;
+        try {
+            waitingQueueIds = waitingQueueRedisRepository.findAll(resourceId, startAt);
+        } catch (RuntimeException e) {
+            log.warn("Redis 대기열 조회에 실패해 이번 승급 시도를 건너뜁니다. resourceId={}, startAt={}",
+                    resourceId, startAt, e);
+            return null;
+        }
         for (Long waitingQueueId : waitingQueueIds) {
             Optional<WaitingQueue> found = waitingQueueRepository.findById(waitingQueueId);
             if (found.isPresent() && found.get().getStatus() == WaitingQueueStatus.WAITING) {
                 return found.get();
             }
-            // 취소 등으로 이미 WAITING이 아닌 stale 항목은 ZSET에서 제거하고 다음 후보를 확인한다
             removeFromWaitingQueueRedis(waitingQueueId, resourceId, startAt);
         }
         return null;

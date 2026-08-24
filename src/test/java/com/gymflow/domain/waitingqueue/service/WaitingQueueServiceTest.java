@@ -421,6 +421,23 @@ class WaitingQueueServiceTest {
     }
 
     @Test
+    @DisplayName("취소 시 Redis ZREM이 실패해도 예외가 전파되지 않고 MySQL 취소 상태는 유지된다")
+    void cancelWaitingQueue_WithRedisRemoveFailure_ShouldStillPersistCancellation() {
+        // given
+        Resource resource = activeResource();
+        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
+        when(waitingQueueRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(waitingQueue));
+        doThrow(new RedisConnectionFailureException("연결 실패"))
+                .when(waitingQueueRedisRepository).remove(100L, RESOURCE_ID, START_AT);
+
+        // when
+        waitingQueueService.cancelWaitingQueue(100L);
+
+        // then: Redis 장애와 무관하게 MySQL 취소(source of truth)는 그대로 유지된다
+        assertThat(waitingQueue.getStatus()).isEqualTo(WaitingQueueStatus.CANCELLED);
+    }
+
+    @Test
     @DisplayName("존재하지 않는 대기열을 취소하면 예외가 발생한다")
     void cancelWaitingQueue_WithNonExistentWaitingQueue_ShouldThrowException() {
         // given

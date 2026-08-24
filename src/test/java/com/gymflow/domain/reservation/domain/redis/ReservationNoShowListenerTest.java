@@ -176,4 +176,15 @@ class ReservationNoShowListenerTest {
         // then
         verify(reservationRepository, never()).findById(any());
     }
+
+    @Test
+    @DisplayName("handleNoShowExpiration에서 예외가 발생해도 Listener는 예외를 전파하지 않는다")
+    void onMessage_WithServiceException_ShouldNotPropagate() {
+        // given
+        when(reservationRepository.findById(RESERVATION_ID)).thenThrow(new RuntimeException("DB 오류"));
+
+        // when & then
+        assertThatCode(() -> listener.onMessage(expiredMessage(ReservationNoShowKey.from(RESERVATION_ID)), null))
+                .doesNotThrowAnyException();
+    }
 }

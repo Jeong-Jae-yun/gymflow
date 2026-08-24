@@ -50,6 +50,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -327,6 +328,31 @@ class PromotionServiceTest {
         // then
         verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
         verify(waitingQueueEventPublisher, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("Redis 대기열 조회(findAll)가 실패해도 예외가 전파되지 않고 이번 승급 시도만 건너뛴다")
+    void tryPromote_WithWaitingQueueRedisFindAllFailure_ShouldSkipPromotionWithoutPropagatingException() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        LocalDateTime endAt = LocalDateTime.now().plusMinutes(15);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
+        when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT))
+                .thenThrow(new RedisConnectionFailureException("연결 실패"));
+
+        // when & then: findAll 실패는 warn 로그만 남기고 예외 없이 종료되어야 한다
+        assertThatCode(() -> promotionService.tryPromote(RESOURCE_ID, START_AT, endAt))
+                .doesNotThrowAnyException();
+
+        // then: 승급 후보를 알 수 없으므로 새로운 Promotion을 생성하지 않는다
+        verify(waitingQueueRepository, never()).findById(any());
+        verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
+        verify(waitingQueueEventPublisher, never()).publish(any());
+        // 이미 획득한 PromotionLock은 정상적으로 해제된다
+        verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, endAt, "lock-token");
     }
 
     @Test
