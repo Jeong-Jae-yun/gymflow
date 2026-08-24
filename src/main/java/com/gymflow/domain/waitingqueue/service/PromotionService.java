@@ -3,6 +3,8 @@ package com.gymflow.domain.waitingqueue.service;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockHandle;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
@@ -49,6 +51,7 @@ public class PromotionService {
     private final ResourceRepository resourceRepository;
     private final WaitingQueueRedisRepository waitingQueueRedisRepository;
     private final PromotionLockRepository promotionLockRepository;
+    private final ReservationSlotLockRepository reservationSlotLockRepository;
     private final PromotionOfferedRepository promotionOfferedRepository;
     private final PromotionCheckInRepository promotionCheckInRepository;
     private final WaitingQueueEventPublisher waitingQueueEventPublisher;
@@ -92,22 +95,37 @@ public class PromotionService {
             }
             Duration ttl = available.compareTo(MAX_OFFERED_TTL) < 0 ? available : MAX_OFFERED_TTL;
 
-            candidate.promote();
+            // Lock 획득 순서: PromotionLock(상위) → ReservationSlotLock(하위) 고정(accept()와 동일).
+            // OFFERED 생성도 Resource 시간 점유권 변경이므로 createReservation/extendReservation과
+            // 동일한 canonical slot 경계를 공유해야, 겹치는 시간대의 일반 예약 생성과 동시에
+            // 실행되어도 둘 중 하나만 진행될 수 있다(둘 다 성립하는 상태 방지).
+            Optional<ReservationSlotLockHandle> slotLockHandle =
+                    reservationSlotLockRepository.tryLockAll(resourceId, startAt, endAt);
+            if (slotLockHandle.isEmpty()) {
+                log.warn("Reservation Slot Lock 획득 실패로 승급을 건너뜁니다. resourceId={}, startAt={}, endAt={}",
+                        resourceId, startAt, endAt);
+                return;
+            }
+            try {
+                candidate.promote();
 
-            WaitingQueuePromotion promotion = WaitingQueuePromotion.builder()
-                    .waitingQueue(candidate)
-                    .user(candidate.getUser())
-                    .resource(resource)
-                    .startAt(startAt)
-                    .endAt(endAt)
-                    .offeredAt(now)
-                    .expiresAt(now.plus(ttl))
-                    .build();
-            WaitingQueuePromotion saved = promotionRepository.save(promotion);
+                WaitingQueuePromotion promotion = WaitingQueuePromotion.builder()
+                        .waitingQueue(candidate)
+                        .user(candidate.getUser())
+                        .resource(resource)
+                        .startAt(startAt)
+                        .endAt(endAt)
+                        .offeredAt(now)
+                        .expiresAt(now.plus(ttl))
+                        .build();
+                WaitingQueuePromotion saved = promotionRepository.save(promotion);
 
-            removeFromWaitingQueueRedis(candidate.getId(), resourceId, startAt);
-            registerOfferedTtl(saved.getId(), ttl);
-            publishPromotedEvent(saved, now);
+                removeFromWaitingQueueRedis(candidate.getId(), resourceId, startAt);
+                registerOfferedTtl(saved.getId(), ttl);
+                publishPromotedEvent(saved, now);
+            } finally {
+                reservationSlotLockRepository.unlockAll(slotLockHandle.get());
+            }
         } finally {
             promotionLockRepository.unlock(resourceId, startAt, endAt, lockToken);
         }
@@ -125,38 +143,47 @@ public class PromotionService {
         LocalDateTime startAt = promotion.getStartAt();
         LocalDateTime endAt = promotion.getEndAt();
 
+        // Lock 획득 순서: PromotionLock(상위) → ReservationSlotLock(하위) 고정. 프로젝트 전체에서
+        // 이 순서를 역전시키지 않는다(tryPromote()도 동일 순서). PromotionLock은 Promotion 상태
+        // 전이를, ReservationSlotLock은 Resource 시간 점유권을 각각 보호하는 별개의 책임이다.
         String lockToken = promotionLockRepository.tryLock(resourceId, startAt, endAt)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
         try {
-            WaitingQueuePromotion current = promotionRepository.findById(promotion.getId())
-                    .orElseThrow(() -> new BusinessException(ErrorCode.PROMOTION_NOT_FOUND));
-            validateOfferedAndNotExpired(current);
+            ReservationSlotLockHandle slotLockHandle = reservationSlotLockRepository.tryLockAll(resourceId, startAt, endAt)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+            try {
+                WaitingQueuePromotion current = promotionRepository.findById(promotion.getId())
+                        .orElseThrow(() -> new BusinessException(ErrorCode.PROMOTION_NOT_FOUND));
+                validateOfferedAndNotExpired(current);
 
-            boolean hasConflict = reservationRepository.existsOverlapping(
-                    resourceId, ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
-            if (hasConflict) {
-                throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+                boolean hasConflict = reservationRepository.existsOverlapping(
+                        resourceId, ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
+                if (hasConflict) {
+                    throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+                }
+
+                LocalDateTime now = LocalDateTime.now();
+                current.accept(now);
+
+                Reservation reservation = Reservation.builder()
+                        .reservationBatchId(UUID.randomUUID())
+                        .user(current.getUser())
+                        .resource(current.getResource())
+                        .startAt(current.getStartAt())
+                        .endAt(current.getEndAt())
+                        .build();
+                Reservation savedReservation = reservationRepository.save(reservation);
+                current.linkReservation(savedReservation);
+
+                removeOfferedTtl(current.getId());
+                LocalDateTime checkInDeadline = now.plus(CHECK_IN_TTL);
+                registerCheckInTtl(savedReservation.getId(), CHECK_IN_TTL);
+
+                return new PromotionAcceptResponse(
+                        current.getId(), current.getStatus(), savedReservation.getId(), checkInDeadline);
+            } finally {
+                reservationSlotLockRepository.unlockAll(slotLockHandle);
             }
-
-            LocalDateTime now = LocalDateTime.now();
-            current.accept(now);
-
-            Reservation reservation = Reservation.builder()
-                    .reservationBatchId(UUID.randomUUID())
-                    .user(current.getUser())
-                    .resource(current.getResource())
-                    .startAt(current.getStartAt())
-                    .endAt(current.getEndAt())
-                    .build();
-            Reservation savedReservation = reservationRepository.save(reservation);
-            current.linkReservation(savedReservation);
-
-            removeOfferedTtl(current.getId());
-            LocalDateTime checkInDeadline = now.plus(CHECK_IN_TTL);
-            registerCheckInTtl(savedReservation.getId(), CHECK_IN_TTL);
-
-            return new PromotionAcceptResponse(
-                    current.getId(), current.getStatus(), savedReservation.getId(), checkInDeadline);
         } finally {
             promotionLockRepository.unlock(resourceId, startAt, endAt, lockToken);
         }

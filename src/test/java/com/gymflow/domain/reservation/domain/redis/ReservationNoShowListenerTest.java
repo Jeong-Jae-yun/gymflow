@@ -62,7 +62,7 @@ class ReservationNoShowListenerTest {
     private UsageHistoryRepository usageHistoryRepository;
 
     @Mock
-    private ReservationLockRepository reservationLockRepository;
+    private ReservationSlotLockRepository reservationSlotLockRepository;
 
     @Mock
     private ReservationNoShowRepository reservationNoShowRepository;
@@ -79,7 +79,7 @@ class ReservationNoShowListenerTest {
     void setUp() {
         ReservationService reservationService = new ReservationService(
                 reservationRepository, resourceRepository, userRepository,
-                usageHistoryRepository, reservationLockRepository, reservationNoShowRepository,
+                usageHistoryRepository, reservationSlotLockRepository, reservationNoShowRepository,
                 resourceRankingRedisRepository, promotionService);
         listener = new ReservationNoShowListener(new RedisMessageListenerContainer(), reservationService);
     }

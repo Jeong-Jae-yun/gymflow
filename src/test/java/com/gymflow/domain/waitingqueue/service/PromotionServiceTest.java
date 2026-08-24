@@ -3,6 +3,8 @@ package com.gymflow.domain.waitingqueue.service;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockHandle;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -52,6 +55,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -67,6 +71,8 @@ class PromotionServiceTest {
     private static final Long PROMOTION_ID = 501L;
     private static final LocalDateTime START_AT = LocalDateTime.of(2026, 8, 12, 14, 0);
     private static final LocalDateTime END_AT = LocalDateTime.of(2026, 8, 12, 14, 15);
+    private static final ReservationSlotLockHandle SLOT_LOCK_HANDLE = new ReservationSlotLockHandle(
+            List.of(new ReservationSlotLockHandle.SlotLock("test-slot-key", "slot-lock-token")));
 
     @Mock
     private WaitingQueuePromotionRepository promotionRepository;
@@ -85,6 +91,9 @@ class PromotionServiceTest {
 
     @Mock
     private PromotionLockRepository promotionLockRepository;
+
+    @Mock
+    private ReservationSlotLockRepository reservationSlotLockRepository;
 
     @Mock
     private PromotionOfferedRepository promotionOfferedRepository;
@@ -107,6 +116,9 @@ class PromotionServiceTest {
 
         lenient().when(promotionLockRepository.tryLock(any(), any(), any()))
                 .thenReturn(Optional.of("lock-token"));
+        // accept()/tryPromote()를 다루지 않는 테스트에서는 사용되지 않으므로 lenient로 등록한다
+        lenient().when(reservationSlotLockRepository.tryLockAll(any(), any(), any()))
+                .thenReturn(Optional.of(SLOT_LOCK_HANDLE));
     }
 
     @AfterEach
@@ -290,6 +302,33 @@ class PromotionServiceTest {
                 .findByResourceIdAndStartAtAndEndAtAndStatus(any(), any(), any(), any());
         verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
         verify(promotionLockRepository, never()).unlock(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("ReservationSlotLock 획득에 실패하면 승급을 건너뛰지만 PromotionLock은 해제된다")
+    void tryPromote_WithReservationSlotLockAcquisitionFailure_ShouldSkipButReleasePromotionLock() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        LocalDateTime endAt = LocalDateTime.now().plusMinutes(15);
+        WaitingQueue candidate = waitingQueue(WAITING_QUEUE_ID, user(2L), resource, WaitingQueueStatus.WAITING);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
+                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of(WAITING_QUEUE_ID));
+        when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
+        when(reservationSlotLockRepository.tryLockAll(RESOURCE_ID, START_AT, endAt)).thenReturn(Optional.empty());
+
+        // when
+        promotionService.tryPromote(RESOURCE_ID, START_AT, endAt);
+
+        // then: 후보가 있어도 겹치는 시간대의 일반 예약 생성 등과 Slot Lock이 경합 중이면 승급을 건너뛴다
+        assertThat(candidate.getStatus()).isEqualTo(WaitingQueueStatus.WAITING);
+        verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
+        verify(waitingQueueEventPublisher, never()).publish(any());
+        // ReservationSlotLock을 획득하지 못했더라도 이미 획득한 PromotionLock은 반드시 해제되어야 한다
+        verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, endAt, "lock-token");
+        verify(reservationSlotLockRepository, never()).unlockAll(any());
     }
 
     @Test
@@ -488,6 +527,62 @@ class PromotionServiceTest {
         verify(reservationRepository, never()).existsOverlapping(any(), anyCollection(), any(), any());
         verify(reservationRepository, never()).save(any(Reservation.class));
         verify(promotionLockRepository, never()).unlock(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Lock 획득 순서는 PromotionLock -> ReservationSlotLock이고 해제는 그 역순이다")
+    void accept_ShouldAcquireAndReleaseLocksInFixedOrder() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        User currentUser = user(CURRENT_USER_ID);
+        WaitingQueue waitingQueue = waitingQueue(WAITING_QUEUE_ID, currentUser, resource, WaitingQueueStatus.PROMOTED);
+        WaitingQueuePromotion promotion =
+                offeredPromotion(PROMOTION_ID, waitingQueue, currentUser, resource, LocalDateTime.now().plusMinutes(1));
+
+        when(promotionRepository.findByIdAndUserId(PROMOTION_ID, CURRENT_USER_ID)).thenReturn(Optional.of(promotion));
+        when(promotionRepository.findById(PROMOTION_ID)).thenReturn(Optional.of(promotion));
+        when(reservationRepository.existsOverlapping(
+                RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT)).thenReturn(false);
+        when(reservationRepository.save(any(Reservation.class))).thenAnswer(invocation -> {
+            Reservation reservation = invocation.getArgument(0);
+            ReflectionTestUtils.setField(reservation, "id", 9001L);
+            return reservation;
+        });
+
+        // when
+        promotionService.accept(PROMOTION_ID);
+
+        // then: PromotionLock(상위) -> ReservationSlotLock(하위) 획득, 해제는 역순(ReservationSlotLock -> PromotionLock)
+        InOrder inOrder = inOrder(promotionLockRepository, reservationSlotLockRepository);
+        inOrder.verify(promotionLockRepository).tryLock(RESOURCE_ID, START_AT, END_AT);
+        inOrder.verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, START_AT, END_AT);
+        inOrder.verify(reservationSlotLockRepository).unlockAll(SLOT_LOCK_HANDLE);
+        inOrder.verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, END_AT, "lock-token");
+    }
+
+    @Test
+    @DisplayName("ReservationSlotLock 획득에 실패하면 RESERVATION_IN_PROGRESS 예외가 발생하고 PromotionLock은 해제된다")
+    void accept_WithReservationSlotLockAcquisitionFailure_ShouldThrowExceptionAndReleasePromotionLock() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        User currentUser = user(CURRENT_USER_ID);
+        WaitingQueue waitingQueue = waitingQueue(WAITING_QUEUE_ID, currentUser, resource, WaitingQueueStatus.PROMOTED);
+        WaitingQueuePromotion promotion =
+                offeredPromotion(PROMOTION_ID, waitingQueue, currentUser, resource, LocalDateTime.now().plusMinutes(1));
+
+        when(promotionRepository.findByIdAndUserId(PROMOTION_ID, CURRENT_USER_ID)).thenReturn(Optional.of(promotion));
+        when(reservationSlotLockRepository.tryLockAll(RESOURCE_ID, START_AT, END_AT)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> promotionService.accept(PROMOTION_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
+
+        verify(reservationRepository, never()).existsOverlapping(any(), anyCollection(), any(), any());
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        // ReservationSlotLock을 획득하지 못했더라도 이미 획득한 PromotionLock은 반드시 해제되어야 한다
+        verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, END_AT, "lock-token");
+        verify(reservationSlotLockRepository, never()).unlockAll(any());
     }
 
     // ===================== reject =====================

@@ -214,6 +214,67 @@ class ReservationConcurrencyTest {
     }
 
     @Test
+    @DisplayName("겹치지만 완전히 동일하지는 않은 두 시간대(14:00~14:30, 14:20~14:35)에 대한 동시 예약 요청은 하나만 성공한다")
+    void createReservation_WithConcurrentOverlappingButNotIdenticalRequests_ShouldSucceedOnlyOnce() throws InterruptedException {
+        // given: 정확히 같은 startAt/endAt이 아니라 시간대가 겹치기만 하는 두 요청을 동시에 보낸다
+        Long resourceId = persistResourceWithPolicy("Overlapping Not Identical Resource " + System.nanoTime());
+        Long userAId = persistUser("overlap-not-identical-user-a-" + System.nanoTime() + "@gymflow.com");
+        Long userBId = persistUser("overlap-not-identical-user-b-" + System.nanoTime() + "@gymflow.com");
+        LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch readyLatch = new CountDownLatch(2);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(2);
+        AtomicInteger successCount = new AtomicInteger();
+        AtomicInteger failureCount = new AtomicInteger();
+
+        // when: A는 14:00~14:30, B는 14:20~14:35를 동시에 예약 시도한다 (14:20~14:30 구간이 겹친다)
+        executor.submit(() -> {
+            try {
+                readyLatch.countDown();
+                startLatch.await();
+                authenticateAs(userAId);
+                reservationService.createReservation(new ReservationCreateRequest(resourceId, startAt, 30));
+                successCount.incrementAndGet();
+            } catch (BusinessException e) {
+                failureCount.incrementAndGet();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                SecurityContextHolder.clearContext();
+                doneLatch.countDown();
+            }
+        });
+        executor.submit(() -> {
+            try {
+                readyLatch.countDown();
+                startLatch.await();
+                authenticateAs(userBId);
+                reservationService.createReservation(
+                        new ReservationCreateRequest(resourceId, startAt.plusMinutes(20), 15));
+                successCount.incrementAndGet();
+            } catch (BusinessException e) {
+                failureCount.incrementAndGet();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                SecurityContextHolder.clearContext();
+                doneLatch.countDown();
+            }
+        });
+        readyLatch.await();
+        startLatch.countDown();
+        boolean completed = doneLatch.await(30, TimeUnit.SECONDS);
+        executor.shutdown();
+
+        // then: 두 시간대가 겹치므로 정확히 하나만 성공해야 한다
+        assertThat(completed).isTrue();
+        assertThat(successCount.get()).isEqualTo(1);
+        assertThat(failureCount.get()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("동일한 CHECKED_IN 예약에 대한 동시 연장 요청은 하나만 성공한다")
     void extendReservation_WithConcurrentRequestsForSameReservation_ShouldSucceedOnlyOnce() throws InterruptedException {
         // given

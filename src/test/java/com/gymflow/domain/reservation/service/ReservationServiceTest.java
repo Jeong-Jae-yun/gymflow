@@ -3,8 +3,9 @@ package com.gymflow.domain.reservation.service;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.CancelReason;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
-import com.gymflow.domain.reservation.domain.redis.ReservationLockRepository;
 import com.gymflow.domain.reservation.domain.redis.ReservationNoShowRepository;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockHandle;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
@@ -70,6 +71,8 @@ class ReservationServiceTest {
 
     private static final Long CURRENT_USER_ID = 1L;
     private static final Long RESOURCE_ID = 10L;
+    private static final ReservationSlotLockHandle LOCK_HANDLE = new ReservationSlotLockHandle(
+            List.of(new ReservationSlotLockHandle.SlotLock("test-slot-key", "lock-token")));
 
     @Mock
     private ReservationRepository reservationRepository;
@@ -84,7 +87,7 @@ class ReservationServiceTest {
     private UsageHistoryRepository usageHistoryRepository;
 
     @Mock
-    private ReservationLockRepository reservationLockRepository;
+    private ReservationSlotLockRepository reservationSlotLockRepository;
 
     @Mock
     private ReservationNoShowRepository reservationNoShowRepository;
@@ -106,8 +109,8 @@ class ReservationServiceTest {
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
         // createReservation을 다루지 않는 테스트에서는 사용되지 않으므로 lenient로 등록한다
-        lenient().when(reservationLockRepository.tryLock(any(), any(), any()))
-                .thenReturn(Optional.of("lock-token"));
+        lenient().when(reservationSlotLockRepository.tryLockAll(any(), any(), any()))
+                .thenReturn(Optional.of(LOCK_HANDLE));
     }
 
     @AfterEach
@@ -185,8 +188,8 @@ class ReservationServiceTest {
         assertThat(response.resourceId()).isEqualTo(RESOURCE_ID);
         assertThat(response.startAt()).isEqualTo(startAt);
         assertThat(response.endAt()).isEqualTo(startAt.plusMinutes(30));
-        verify(reservationLockRepository).tryLock(RESOURCE_ID, startAt, startAt.plusMinutes(30));
-        verify(reservationLockRepository).unlock(RESOURCE_ID, startAt, startAt.plusMinutes(30), "lock-token");
+        verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, startAt, startAt.plusMinutes(30));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -208,7 +211,7 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_PROMOTION_RESERVED);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
-        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -343,7 +346,7 @@ class ReservationServiceTest {
 
         verify(reservationRepository, never()).save(any(Reservation.class));
         // existsOverlapping이 실제 충돌을 판단했더라도 Lock은 finally에서 반드시 해제되어야 한다
-        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -376,7 +379,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationLockRepository.tryLock(any(), any(), any())).thenReturn(Optional.empty());
+        when(reservationSlotLockRepository.tryLockAll(any(), any(), any())).thenReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> reservationService.createReservation(request))
@@ -387,7 +390,7 @@ class ReservationServiceTest {
                 .existsOverlapping(any(), anyCollection(), any(), any());
         verify(reservationRepository, never()).save(any(Reservation.class));
         // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
-        verify(reservationLockRepository, never()).unlock(any(), any(), any(), any());
+        verify(reservationSlotLockRepository, never()).unlockAll(any());
     }
 
     @Test
@@ -407,7 +410,7 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.createReservation(request))
                 .isInstanceOf(RuntimeException.class);
 
-        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -497,7 +500,7 @@ class ReservationServiceTest {
         // (Lock과 NO_SHOW Redis는 서로 다른 컴포넌트로 분리되어 있어 서로 영향을 주지 않는다)
         assertThat(response.reservationId()).isEqualTo(100L);
         assertThat(response.status()).isEqualTo(ReservationStatus.CONFIRMED);
-        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -571,7 +574,7 @@ class ReservationServiceTest {
         ReservationCreateRequest request =
                 new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationLockRepository.tryLock(any(), any(), any())).thenReturn(Optional.empty());
+        when(reservationSlotLockRepository.tryLockAll(any(), any(), any())).thenReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> reservationService.createReservation(request))
@@ -884,12 +887,13 @@ class ReservationServiceTest {
         assertThat(response.extensionCount()).isEqualTo(1);
         assertThat(reservation.getEndAt()).isEqualTo(newEndAt);
         assertThat(reservation.getExtensionCount()).isEqualTo(1);
-        // 기존 endAt(14:15)이 아니라 연장하려는 새로운 시간 구간(startAt~newEndAt)을 기준으로 Lock을 획득/해제해야 한다
-        verify(reservationLockRepository).tryLock(RESOURCE_ID, startAt, newEndAt);
+        // 전체 구간(startAt~newEndAt)이 아니라 연장으로 새로 점유하는 구간(oldEndAt~newEndAt)만
+        // 기준으로 Lock을 획득/해제해야 한다. startAt~oldEndAt은 이미 이 예약이 점유 중이다.
+        verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, originalEndAt, newEndAt);
         verify(reservationRepository).existsOverlappingExcludingReservation(
                 RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, originalEndAt, newEndAt, 100L);
         verify(reservationRepository).save(reservation);
-        verify(reservationLockRepository).unlock(RESOURCE_ID, startAt, newEndAt, "lock-token");
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -936,7 +940,7 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_NOT_EXTENDABLE);
-        verify(reservationLockRepository, never()).tryLock(any(), any(), any());
+        verify(reservationSlotLockRepository, never()).tryLockAll(any(), any(), any());
         verify(reservationRepository, never()).save(any(Reservation.class));
     }
 
@@ -975,7 +979,7 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_MAX_DURATION_EXCEEDED);
-        verify(reservationLockRepository, never()).tryLock(any(), any(), any());
+        verify(reservationSlotLockRepository, never()).tryLockAll(any(), any(), any());
     }
 
     @Test
@@ -995,7 +999,7 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_EXTENSION_LIMIT_EXCEEDED);
-        verify(reservationLockRepository, never()).tryLock(any(), any(), any());
+        verify(reservationSlotLockRepository, never()).tryLockAll(any(), any(), any());
     }
 
     @Test
@@ -1008,7 +1012,7 @@ class ReservationServiceTest {
         ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(reservationLockRepository.tryLock(any(), any(), any())).thenReturn(Optional.empty());
+        when(reservationSlotLockRepository.tryLockAll(any(), any(), any())).thenReturn(Optional.empty());
         ReservationExtensionRequest request = new ReservationExtensionRequest(15);
 
         // when & then
@@ -1021,7 +1025,7 @@ class ReservationServiceTest {
         verify(reservationRepository, never()).save(any(Reservation.class));
         assertThat(reservation.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 15));
         // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
-        verify(reservationLockRepository, never()).unlock(any(), any(), any(), any());
+        verify(reservationSlotLockRepository, never()).unlockAll(any());
     }
 
     @ParameterizedTest
@@ -1051,7 +1055,7 @@ class ReservationServiceTest {
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
         assertThat(reservation.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 15));
         // overlap 재검증으로 충돌이 확인되었더라도 Lock은 finally에서 반드시 해제되어야 한다
-        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -1097,7 +1101,7 @@ class ReservationServiceTest {
                 .isInstanceOf(IllegalStateException.class);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
-        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test
@@ -1120,7 +1124,7 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
                 .isInstanceOf(RuntimeException.class);
 
-        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
     }
 
     @Test

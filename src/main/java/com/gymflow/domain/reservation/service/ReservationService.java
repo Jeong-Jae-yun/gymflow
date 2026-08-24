@@ -2,8 +2,9 @@ package com.gymflow.domain.reservation.service;
 
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
-import com.gymflow.domain.reservation.domain.redis.ReservationLockRepository;
 import com.gymflow.domain.reservation.domain.redis.ReservationNoShowRepository;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockHandle;
+import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
@@ -44,7 +45,7 @@ public class ReservationService {
     private final ResourceRepository resourceRepository;
     private final UserRepository userRepository;
     private final UsageHistoryRepository usageHistoryRepository;
-    private final ReservationLockRepository reservationLockRepository;
+    private final ReservationSlotLockRepository reservationSlotLockRepository;
     private final ReservationNoShowRepository reservationNoShowRepository;
     private final ResourceRankingRedisRepository resourceRankingRedisRepository;
     private final PromotionService promotionService;
@@ -74,7 +75,7 @@ public class ReservationService {
         LocalDateTime endAt = startAt.plusMinutes(duration);
 
 
-        String lockToken = reservationLockRepository.tryLock(resource.getId(), startAt, endAt)
+        ReservationSlotLockHandle lockHandle = reservationSlotLockRepository.tryLockAll(resource.getId(), startAt, endAt)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
         try {
             boolean hasConflict = reservationRepository.existsOverlapping(
@@ -103,7 +104,7 @@ public class ReservationService {
 
             return ReservationMapper.toResponse(savedReservation);
         } finally {
-            reservationLockRepository.unlock(resource.getId(), startAt, endAt, lockToken);
+            reservationSlotLockRepository.unlockAll(lockHandle);
         }
     }
 
@@ -175,11 +176,12 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.RESERVATION_MAX_DURATION_EXCEEDED);
         }
 
-        String lockToken = reservationLockRepository.tryLock(resource.getId(), reservation.getStartAt(), newEndAt)
+        LocalDateTime deltaStart = reservation.getEndAt();
+        ReservationSlotLockHandle lockHandle = reservationSlotLockRepository.tryLockAll(resource.getId(), deltaStart, newEndAt)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
         try {
             boolean hasConflict = reservationRepository.existsOverlappingExcludingReservation(
-                    resource.getId(), ReservationStatus.OCCUPYING_STATUSES, reservation.getEndAt(), newEndAt, reservation.getId());
+                    resource.getId(), ReservationStatus.OCCUPYING_STATUSES, deltaStart, newEndAt, reservation.getId());
             if (hasConflict) {
                 throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
             }
@@ -189,7 +191,7 @@ public class ReservationService {
 
             return ReservationMapper.toResponse(reservation);
         } finally {
-            reservationLockRepository.unlock(resource.getId(), reservation.getStartAt(), newEndAt, lockToken);
+            reservationSlotLockRepository.unlockAll(lockHandle);
         }
     }
 
