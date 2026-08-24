@@ -12,6 +12,7 @@ import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueEventPublisher;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueuePromotedEvent;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRegistrationLockRepository;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueueRepository;
 import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
 import com.gymflow.domain.waitingqueue.dto.response.WaitingQueueResponse;
@@ -40,6 +41,7 @@ public class WaitingQueueService {
     private final UserRepository userRepository;
     private final WaitingQueueRedisRepository waitingQueueRedisRepository;
     private final WaitingQueueEventPublisher waitingQueueEventPublisher;
+    private final WaitingQueueRegistrationLockRepository waitingQueueRegistrationLockRepository;
 
     @Transactional
     public WaitingQueueResponse registerWaitingQueue(WaitingQueueCreateRequest request) {
@@ -58,32 +60,39 @@ public class WaitingQueueService {
             throw new BusinessException(ErrorCode.INVALID_WAITING_QUEUE_TIME_RANGE);
         }
 
-        boolean alreadyWaiting = waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
-                currentUserId, resource.getId(), startAt, endAt, WaitingQueueStatus.WAITING);
-        if (alreadyWaiting) {
-            throw new BusinessException(ErrorCode.WAITING_QUEUE_ALREADY_EXISTS);
-        }
-
         boolean reservationAvailable = !reservationRepository.existsOverlapping(
                 resource.getId(), ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
         if (reservationAvailable) {
             throw new BusinessException(ErrorCode.WAITING_QUEUE_NOT_AVAILABLE);
         }
 
-        User user = userRepository.getReferenceById(currentUserId);
+        String lockToken = waitingQueueRegistrationLockRepository
+                .tryLock(currentUserId, resource.getId(), startAt, endAt)
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAITING_QUEUE_IN_PROGRESS));
+        try {
+            boolean alreadyWaiting = waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
+                    currentUserId, resource.getId(), startAt, endAt, WaitingQueueStatus.WAITING);
+            if (alreadyWaiting) {
+                throw new BusinessException(ErrorCode.WAITING_QUEUE_ALREADY_EXISTS);
+            }
 
-        WaitingQueue waitingQueue = WaitingQueue.builder()
-                .user(user)
-                .resource(resource)
-                .startAt(startAt)
-                .endAt(endAt)
-                .build();
+            User user = userRepository.getReferenceById(currentUserId);
 
-        WaitingQueue savedWaitingQueue = waitingQueueRepository.save(waitingQueue);
+            WaitingQueue waitingQueue = WaitingQueue.builder()
+                    .user(user)
+                    .resource(resource)
+                    .startAt(startAt)
+                    .endAt(endAt)
+                    .build();
 
-        Long waitingRank = registerToRedisAndGetRank(savedWaitingQueue);
+            WaitingQueue savedWaitingQueue = waitingQueueRepository.save(waitingQueue);
 
-        return WaitingQueueMapper.toResponse(savedWaitingQueue, waitingRank);
+            Long waitingRank = registerToRedisAndGetRank(savedWaitingQueue);
+
+            return WaitingQueueMapper.toResponse(savedWaitingQueue, waitingRank);
+        } finally {
+            waitingQueueRegistrationLockRepository.unlock(currentUserId, resource.getId(), startAt, endAt, lockToken);
+        }
     }
 
     public Page<WaitingQueueResponse> getMyWaitingQueues(Pageable pageable) {

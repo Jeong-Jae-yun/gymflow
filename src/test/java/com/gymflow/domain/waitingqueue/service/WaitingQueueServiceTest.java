@@ -14,6 +14,7 @@ import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueEventPublisher;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueuePromotedEvent;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRegistrationLockRepository;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueueRepository;
 import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
 import com.gymflow.domain.waitingqueue.dto.response.WaitingQueueResponse;
@@ -78,8 +79,13 @@ class WaitingQueueServiceTest {
     @Mock
     private WaitingQueueEventPublisher waitingQueueEventPublisher;
 
+    @Mock
+    private WaitingQueueRegistrationLockRepository waitingQueueRegistrationLockRepository;
+
     @InjectMocks
     private WaitingQueueService waitingQueueService;
+
+    private static final String LOCK_TOKEN = "lock-token";
 
     @BeforeEach
     void setUpSecurityContext() {
@@ -134,11 +140,18 @@ class WaitingQueueServiceTest {
     }
 
     private void stubNoDuplicateAndUnavailable() {
+        stubLockSuccess();
         when(waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
                 eq(CURRENT_USER_ID), eq(RESOURCE_ID), eq(START_AT), eq(END_AT), eq(WaitingQueueStatus.WAITING)))
                 .thenReturn(false);
         when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT))
                 .thenReturn(true);
+    }
+
+    private void stubLockSuccess() {
+        when(waitingQueueRegistrationLockRepository.tryLock(
+                eq(CURRENT_USER_ID), eq(RESOURCE_ID), eq(START_AT), eq(END_AT)))
+                .thenReturn(Optional.of(LOCK_TOKEN));
     }
 
     @Test
@@ -165,6 +178,9 @@ class WaitingQueueServiceTest {
         assertThat(response.status()).isEqualTo(WaitingQueueStatus.WAITING);
         assertThat(response.waitingRank()).isEqualTo(2L);
         verify(waitingQueueRedisRepository).add(eq(100L), eq(RESOURCE_ID), eq(START_AT), any());
+        verify(waitingQueueRegistrationLockRepository).tryLock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT);
+        verify(waitingQueueRegistrationLockRepository)
+                .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
     }
 
     @Test
@@ -187,6 +203,8 @@ class WaitingQueueServiceTest {
         assertThat(response.waitingQueueId()).isEqualTo(100L);
         assertThat(response.waitingRank()).isNull();
         verify(waitingQueueRepository).save(any(WaitingQueue.class));
+        verify(waitingQueueRegistrationLockRepository)
+                .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
     }
 
     @Test
@@ -239,12 +257,15 @@ class WaitingQueueServiceTest {
     }
 
     @Test
-    @DisplayName("동일한 사용자/Resource/시간대에 이미 WAITING 상태의 대기열이 있으면 예외가 발생한다")
-    void registerWaitingQueue_WithDuplicateWaitingEntry_ShouldThrowException() {
+    @DisplayName("Lock 획득 후 동일한 사용자/Resource/시간대에 이미 WAITING 상태의 대기열이 있으면 예외가 발생하고 Lock은 해제된다")
+    void registerWaitingQueue_WithDuplicateWaitingEntry_ShouldThrowExceptionAndUnlock() {
         // given
         Resource resource = activeResource();
         WaitingQueueCreateRequest request = new WaitingQueueCreateRequest(RESOURCE_ID, START_AT, END_AT);
         when(resourceRepository.findById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT))
+                .thenReturn(true);
+        stubLockSuccess();
         when(waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
                 CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, WaitingQueueStatus.WAITING))
                 .thenReturn(true);
@@ -255,18 +276,18 @@ class WaitingQueueServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_ALREADY_EXISTS);
 
         verify(waitingQueueRepository, never()).save(any(WaitingQueue.class));
+        verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
+        verify(waitingQueueRegistrationLockRepository)
+                .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
     }
 
     @Test
-    @DisplayName("이미 예약 가능한 시간대이면 대기열 등록에 실패한다")
+    @DisplayName("이미 예약 가능한 시간대이면 Lock을 획득하지 않고 대기열 등록에 실패한다")
     void registerWaitingQueue_WithAvailableTimeSlot_ShouldThrowException() {
         // given
         Resource resource = activeResource();
         WaitingQueueCreateRequest request = new WaitingQueueCreateRequest(RESOURCE_ID, START_AT, END_AT);
         when(resourceRepository.findById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
-                CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, WaitingQueueStatus.WAITING))
-                .thenReturn(false);
         when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT))
                 .thenReturn(false);
 
@@ -276,6 +297,73 @@ class WaitingQueueServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_NOT_AVAILABLE);
 
         verify(waitingQueueRepository, never()).save(any(WaitingQueue.class));
+        verify(waitingQueueRegistrationLockRepository, never()).tryLock(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Registration Lock 획득에 실패하면 WAITING_QUEUE_IN_PROGRESS 예외가 발생하고 save/ZADD/unlock이 호출되지 않는다")
+    void registerWaitingQueue_WithLockAcquisitionFailure_ShouldThrowInProgressException() {
+        // given
+        Resource resource = activeResource();
+        WaitingQueueCreateRequest request = new WaitingQueueCreateRequest(RESOURCE_ID, START_AT, END_AT);
+        when(resourceRepository.findById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT))
+                .thenReturn(true);
+        when(waitingQueueRegistrationLockRepository.tryLock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT))
+                .thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> waitingQueueService.registerWaitingQueue(request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_IN_PROGRESS);
+
+        verify(waitingQueueRepository, never())
+                .existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(any(), any(), any(), any(), any());
+        verify(waitingQueueRepository, never()).save(any(WaitingQueue.class));
+        verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
+        verify(waitingQueueRegistrationLockRepository, never()).unlock(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("MySQL save가 실패해도 Lock은 해제되고 예외는 그대로 전파된다")
+    void registerWaitingQueue_WithSaveFailure_ShouldUnlockAndPropagateException() {
+        // given
+        Resource resource = activeResource();
+        WaitingQueueCreateRequest request = new WaitingQueueCreateRequest(RESOURCE_ID, START_AT, END_AT);
+        when(resourceRepository.findById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        stubNoDuplicateAndUnavailable();
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        doThrow(new RuntimeException("DB 저장 실패"))
+                .when(waitingQueueRepository).save(any(WaitingQueue.class));
+
+        // when & then
+        assertThatThrownBy(() -> waitingQueueService.registerWaitingQueue(request))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("DB 저장 실패");
+
+        verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
+        verify(waitingQueueRegistrationLockRepository)
+                .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
+    }
+
+    @Test
+    @DisplayName("CANCELLED 이후 동일 시간대 재등록은 성공한다")
+    void registerWaitingQueue_AfterCancelledEntry_ShouldSucceed() {
+        // given: 과거 CANCELLED 이력이 있어도 existsBy...WAITING 조회는 false를 반환한다
+        Resource resource = activeResource();
+        WaitingQueueCreateRequest request = new WaitingQueueCreateRequest(RESOURCE_ID, START_AT, END_AT);
+        when(resourceRepository.findById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        stubNoDuplicateAndUnavailable();
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        WaitingQueueResponse response = waitingQueueService.registerWaitingQueue(request);
+
+        // then
+        assertThat(response.status()).isEqualTo(WaitingQueueStatus.WAITING);
+        verify(waitingQueueRegistrationLockRepository)
+                .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
     }
 
     @Test
