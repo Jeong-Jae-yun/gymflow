@@ -99,8 +99,8 @@ class PromotionConcurrencyTest {
     }
 
     @Test
-    @DisplayName("Promotion ACCEPT와 겹치는(동일하지 않은) 시간대의 신규 예약 생성은 동시에 실행되어도 하나만 성공한다")
-    void accept_WithConcurrentOverlappingNewReservation_ShouldNotBothSucceed() throws InterruptedException {
+    @DisplayName("Promotion ACCEPT와 겹치는(동일하지 않은) 시간대의 신규 예약 생성은 동시에 실행되어도 둘 다 성공하지 않는다")
+    void accept_WithConcurrentOverlappingNewReservation_ShouldNeverBothSucceed() throws InterruptedException {
         // given: A의 예약이 NO_SHOW 처리되어 B가 OFFERED로 자동 승급된다 (14:00~14:15)
         Long resourceId = persistResourceWithPolicy("Accept Overlapping Create Resource " + System.nanoTime());
         Long userAId = persistUser("accept-overlap-user-a-" + System.nanoTime() + "@gymflow.com");
@@ -168,9 +168,14 @@ class PromotionConcurrencyTest {
         boolean completed = doneLatch.await(30, TimeUnit.SECONDS);
         executor.shutdown();
 
-        // then: 겹치는 두 시간대(14:00~14:15, 14:05~14:20) 중 하나만 최종적으로 시간 점유권을 가져야 한다
+        // then: 겹치는 두 시간대(14:00~14:15, 14:05~14:20)에 대해 두 작업이 동시에 성공해서는 안 된다.
+        // ReservationSlotLock은 즉시 실패(fail-fast) 방식이라 재시도 없이 락 경합에서 진 쪽은 그대로
+        // RESERVATION_IN_PROGRESS로 끝난다. C가 락을 먼저 얻는 경우 Active OFFERED Promotion과의
+        // overlap 재검증(RESERVATION_PROMOTION_RESERVED)으로 C도 정상적으로 차단되므로, 이 경우 두
+        // 작업이 모두 실패(successCount=0)하는 것도 유효한 결과다. 따라서 "정확히 1"이 아니라
+        // "동시에 성공하는 경우가 없다(최대 1)"가 이번 정책 변경 이후의 올바른 불변식이다.
         assertThat(completed).isTrue();
-        assertThat(successCount.get()).isEqualTo(1);
+        assertThat(successCount.get()).isLessThanOrEqualTo(1);
     }
 
     @Test

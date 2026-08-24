@@ -193,6 +193,190 @@ class WaitingQueuePromotionRepositoryTest {
         assertThat(found).isEmpty();
     }
 
+    @Test
+    @DisplayName("existsOverlapping은 조회 구간이 기존 OFFERED 구간을 뒤에서 겹치면 true를 반환한다")
+    void existsOverlapping_WithQueryOverlappingFromAfter_ShouldReturnTrue() {
+        // given: OFFERED 14:00~14:15, 조회 14:05~14:20
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.plusMinutes(5), END_AT.plusMinutes(5));
+
+        // then
+        assertThat(exists).isTrue();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 조회 구간이 기존 OFFERED 구간을 앞에서 겹치면 true를 반환한다")
+    void existsOverlapping_WithQueryOverlappingFromBefore_ShouldReturnTrue() {
+        // given: OFFERED 14:00~14:15, 조회 13:50~14:05
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.minusMinutes(10), START_AT.plusMinutes(5));
+
+        // then
+        assertThat(exists).isTrue();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 조회 구간이 기존 OFFERED 구간 종료 시각에 정확히 맞닿으면 false를 반환한다")
+    void existsOverlapping_WithQueryAdjacentAfterExistingOffer_ShouldReturnFalse() {
+        // given: OFFERED 14:00~14:15, 조회 14:15~14:30
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, END_AT, END_AT.plusMinutes(15));
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 조회 구간이 기존 OFFERED 구간 시작 시각에 정확히 맞닿으면 false를 반환한다")
+    void existsOverlapping_WithQueryAdjacentBeforeExistingOffer_ShouldReturnFalse() {
+        // given: OFFERED 14:00~14:15, 조회 13:45~14:00
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.minusMinutes(15), START_AT);
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 조회 구간이 기존 OFFERED 구간을 완전히 포함하면 true를 반환한다")
+    void existsOverlapping_WithQueryFullyContainingExistingOffer_ShouldReturnTrue() {
+        // given: OFFERED 14:00~14:15, 조회 13:50~14:30
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.minusMinutes(10), END_AT.plusMinutes(15));
+
+        // then
+        assertThat(exists).isTrue();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 기존 OFFERED 구간에 조회 구간이 완전히 포함되어도 true를 반환한다")
+    void existsOverlapping_WithQueryFullyContainedInExistingOffer_ShouldReturnTrue() {
+        // given: OFFERED 14:00~14:15, 조회 14:05~14:10
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.plusMinutes(5), START_AT.plusMinutes(10));
+
+        // then
+        assertThat(exists).isTrue();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 다른 Resource의 겹치는 OFFERED는 조회 대상에서 제외한다")
+    void existsOverlapping_WithOtherResource_ShouldReturnFalse() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        Resource otherResource = persistResource("Chest Press A-2");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                otherResource.getId(), PromotionStatus.OFFERED, START_AT.plusMinutes(5), END_AT.plusMinutes(5));
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 REJECTED 상태의 겹치는 Promotion을 조회 대상에서 제외한다")
+    void existsOverlapping_WithRejectedPromotion_ShouldReturnFalse() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion promotion = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        promotion.reject(LocalDateTime.of(2026, 8, 12, 13, 59));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.plusMinutes(5), END_AT.plusMinutes(5));
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 EXPIRED 상태의 겹치는 Promotion을 조회 대상에서 제외한다")
+    void existsOverlapping_WithExpiredPromotion_ShouldReturnFalse() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion promotion = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        promotion.expire(LocalDateTime.of(2026, 8, 12, 13, 59));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.plusMinutes(5), END_AT.plusMinutes(5));
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @Test
+    @DisplayName("existsOverlapping은 ACCEPTED 상태의 겹치는 Promotion을 조회 대상에서 제외한다")
+    void existsOverlapping_WithAcceptedPromotion_ShouldReturnFalse() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion promotion = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        promotion.accept(LocalDateTime.of(2026, 8, 12, 13, 59));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsOverlapping(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.plusMinutes(5), END_AT.plusMinutes(5));
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
     private Reservation persistReservation(User user, Resource resource) {
         Reservation reservation = Reservation.builder()
                 .reservationBatchId(java.util.UUID.randomUUID())

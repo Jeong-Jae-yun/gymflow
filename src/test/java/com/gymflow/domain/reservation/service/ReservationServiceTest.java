@@ -34,6 +34,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -60,6 +61,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -234,6 +236,55 @@ class ReservationServiceTest {
 
         // then
         assertThat(response.reservationId()).isEqualTo(100L);
+    }
+
+    @Test
+    @DisplayName("경계가 정확히 맞닿는 활성 OFFERED Promotion이 있어도 정상적으로 예약이 생성된다")
+    void createReservation_WithAdjacentActiveOfferedPromotion_ShouldSucceed() {
+        // given: OFFERED Promotion 종료 시각과 새 예약 시작 시각이 정확히 맞닿는 경우(overlap 아님)
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(false);
+        when(promotionService.hasActiveOffer(RESOURCE_ID, startAt, startAt.plusMinutes(30))).thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        ReservationResponse response = reservationService.createReservation(request);
+
+        // then
+        assertThat(response.reservationId()).isEqualTo(100L);
+        verify(reservationRepository).save(any(Reservation.class));
+    }
+
+    @Test
+    @DisplayName("Active OFFERED Promotion overlap 검사는 Lock 획득 이후, Reservation overlap 검사 다음 순서로 수행된다")
+    void createReservation_ShouldCheckPromotionOverlapAfterReservationOverlapWithinLock() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(false);
+        when(promotionService.hasActiveOffer(RESOURCE_ID, startAt, startAt.plusMinutes(30))).thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        reservationService.createReservation(request);
+
+        // then: Lock 획득(tryLockAll) -> Reservation overlap 재검증 -> Promotion overlap 재검증 순서로 호출된다
+        InOrder inOrder = inOrder(reservationSlotLockRepository, reservationRepository, promotionService);
+        inOrder.verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, startAt, startAt.plusMinutes(30));
+        inOrder.verify(reservationRepository).existsOverlapping(
+                RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, startAt, startAt.plusMinutes(30));
+        inOrder.verify(promotionService).hasActiveOffer(RESOURCE_ID, startAt, startAt.plusMinutes(30));
     }
 
     @Test
@@ -894,6 +945,89 @@ class ReservationServiceTest {
                 RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, originalEndAt, newEndAt, 100L);
         verify(reservationRepository).save(reservation);
         verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
+    }
+
+    @Test
+    @DisplayName("연장하려는 구간(oldEndAt~newEndAt)에 활성 OFFERED Promotion이 겹치면 연장이 차단된다")
+    void extendReservation_WithOverlappingActiveOfferedPromotion_ShouldThrowException() {
+        // given: 기존 Reservation 14:00~14:15, OFFERED Promotion 14:20~14:35, 연장 요청 14:15->14:30
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 14, 0);
+        LocalDateTime originalEndAt = LocalDateTime.of(2026, 8, 12, 14, 15);
+        LocalDateTime newEndAt = LocalDateTime.of(2026, 8, 12, 14, 30);
+        Reservation reservation = reservation(100L, resource, user(), startAt, originalEndAt);
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
+                .thenReturn(false);
+        when(promotionService.hasActiveOffer(RESOURCE_ID, originalEndAt, newEndAt)).thenReturn(true);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.extendReservation(100L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_PROMOTION_RESERVED);
+
+        assertThat(reservation.getEndAt()).isEqualTo(originalEndAt);
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
+    }
+
+    @Test
+    @DisplayName("연장하려는 구간과 경계만 맞닿는 활성 OFFERED Promotion이 있어도 정상적으로 연장된다")
+    void extendReservation_WithAdjacentActiveOfferedPromotion_ShouldSucceed() {
+        // given: 기존 Reservation 14:00~14:15, OFFERED Promotion 14:30~14:45, 연장 요청 14:15->14:30 (경계만 맞닿음)
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 14, 0);
+        LocalDateTime originalEndAt = LocalDateTime.of(2026, 8, 12, 14, 15);
+        LocalDateTime newEndAt = LocalDateTime.of(2026, 8, 12, 14, 30);
+        Reservation reservation = reservation(100L, resource, user(), startAt, originalEndAt);
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
+                .thenReturn(false);
+        when(promotionService.hasActiveOffer(RESOURCE_ID, originalEndAt, newEndAt)).thenReturn(false);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when
+        ReservationResponse response = reservationService.extendReservation(100L, request);
+
+        // then
+        assertThat(response.endAt()).isEqualTo(newEndAt);
+        verify(reservationRepository).save(reservation);
+    }
+
+    @Test
+    @DisplayName("Promotion overlap 검사는 연장 delta 구간(oldEndAt~newEndAt) 기준으로 Reservation overlap 검사 이후, Lock 획득 이후에 수행된다")
+    void extendReservation_ShouldCheckPromotionOverlapAfterReservationOverlapWithinLock() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 14, 0);
+        LocalDateTime originalEndAt = LocalDateTime.of(2026, 8, 12, 14, 15);
+        LocalDateTime newEndAt = LocalDateTime.of(2026, 8, 12, 14, 30);
+        Reservation reservation = reservation(100L, resource, user(), startAt, originalEndAt);
+        ReflectionTestUtils.setField(reservation, "status", ReservationStatus.CHECKED_IN);
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlappingExcludingReservation(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any(), eq(100L)))
+                .thenReturn(false);
+        when(promotionService.hasActiveOffer(RESOURCE_ID, originalEndAt, newEndAt)).thenReturn(false);
+        ReservationExtensionRequest request = new ReservationExtensionRequest(15);
+
+        // when
+        reservationService.extendReservation(100L, request);
+
+        // then: Lock 획득(tryLockAll) -> Reservation overlap 재검증 -> Promotion overlap 재검증 순서로 호출된다
+        InOrder inOrder = inOrder(reservationSlotLockRepository, reservationRepository, promotionService);
+        inOrder.verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, originalEndAt, newEndAt);
+        inOrder.verify(reservationRepository).existsOverlappingExcludingReservation(
+                RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, originalEndAt, newEndAt, 100L);
+        inOrder.verify(promotionService).hasActiveOffer(RESOURCE_ID, originalEndAt, newEndAt);
     }
 
     @Test

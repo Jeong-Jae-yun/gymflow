@@ -57,8 +57,7 @@ public class PromotionService {
     private final WaitingQueueEventPublisher waitingQueueEventPublisher;
 
     public boolean hasActiveOffer(Long resourceId, LocalDateTime startAt, LocalDateTime endAt) {
-        return promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                resourceId, startAt, endAt, PromotionStatus.OFFERED).isPresent();
+        return promotionRepository.existsOverlapping(resourceId, PromotionStatus.OFFERED, startAt, endAt);
     }
 
     @Transactional
@@ -77,8 +76,7 @@ public class PromotionService {
             return;
         }
         try {
-            if (promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                    resourceId, startAt, endAt, PromotionStatus.OFFERED).isPresent()) {
+            if (promotionRepository.existsOverlapping(resourceId, PromotionStatus.OFFERED, startAt, endAt)) {
                 return;
             }
 
@@ -95,10 +93,6 @@ public class PromotionService {
             }
             Duration ttl = available.compareTo(MAX_OFFERED_TTL) < 0 ? available : MAX_OFFERED_TTL;
 
-            // Lock 획득 순서: PromotionLock(상위) → ReservationSlotLock(하위) 고정(accept()와 동일).
-            // OFFERED 생성도 Resource 시간 점유권 변경이므로 createReservation/extendReservation과
-            // 동일한 canonical slot 경계를 공유해야, 겹치는 시간대의 일반 예약 생성과 동시에
-            // 실행되어도 둘 중 하나만 진행될 수 있다(둘 다 성립하는 상태 방지).
             Optional<ReservationSlotLockHandle> slotLockHandle =
                     reservationSlotLockRepository.tryLockAll(resourceId, startAt, endAt);
             if (slotLockHandle.isEmpty()) {

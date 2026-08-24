@@ -201,8 +201,8 @@ class PromotionServiceTest {
         LocalDateTime endAt = LocalDateTime.now().plusMinutes(15);
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of(WAITING_QUEUE_ID));
         when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
         stubPromotionSave();
@@ -227,13 +227,10 @@ class PromotionServiceTest {
         // given
         Resource resource = resourceWithPolicy(10);
         LocalDateTime endAt = LocalDateTime.now().plusMinutes(15);
-        WaitingQueuePromotion existing = offeredPromotion(
-                600L, waitingQueue(300L, user(3L), resource, WaitingQueueStatus.PROMOTED),
-                user(3L), resource, LocalDateTime.now().plusMinutes(1));
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.of(existing));
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(true);
 
         // when
         promotionService.tryPromote(RESOURCE_ID, START_AT, endAt);
@@ -245,6 +242,74 @@ class PromotionServiceTest {
     }
 
     @Test
+    @DisplayName("기존 OFFERED와 시간이 겹치는(정확히 일치하지 않는) 새 후보 구간은 승급시키지 않는다")
+    void tryPromote_WithOverlappingButNotExactExistingOffer_ShouldNotCreateAnother() {
+        // given: 기존 OFFERED 14:00~14:20, 새 후보 구간 14:10~14:25 (정확히 일치하지 않지만 겹침)
+        Resource resource = resourceWithPolicy(10);
+        LocalDateTime candidateStart = START_AT.plusMinutes(10);
+        LocalDateTime candidateEnd = START_AT.plusMinutes(25);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, candidateStart, candidateEnd)).thenReturn(true);
+
+        // when
+        promotionService.tryPromote(RESOURCE_ID, candidateStart, candidateEnd);
+
+        // then
+        verify(waitingQueueRepository, never()).findById(any());
+        verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
+    }
+
+    @Test
+    @DisplayName("기존 OFFERED와 시간이 겹치지 않고 경계만 맞닿으면 새로운 승급을 시도한다")
+    void tryPromote_WithAdjacentExistingOffer_ShouldStillAttemptPromotion() {
+        // given: 기존 OFFERED 14:00~14:15, 새 후보 구간 14:15~14:30 (경계만 맞닿아 overlap 아님)
+        // candidateEnd는 minDuration 검증(remaining = endAt - now)을 통과하도록 미래 시각으로 둔다
+        Resource resource = resourceWithPolicy(10);
+        LocalDateTime candidateStart = END_AT;
+        LocalDateTime candidateEnd = LocalDateTime.now().plusMinutes(15);
+        WaitingQueue candidate = waitingQueue(WAITING_QUEUE_ID, user(2L), resource, WaitingQueueStatus.WAITING);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, candidateStart, candidateEnd)).thenReturn(false);
+        when(waitingQueueRedisRepository.findAll(RESOURCE_ID, candidateStart)).thenReturn(List.of(WAITING_QUEUE_ID));
+        when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
+        stubPromotionSave();
+
+        // when
+        promotionService.tryPromote(RESOURCE_ID, candidateStart, candidateEnd);
+
+        // then
+        assertThat(candidate.getStatus()).isEqualTo(WaitingQueueStatus.PROMOTED);
+        verify(promotionRepository).save(any(WaitingQueuePromotion.class));
+    }
+
+    @Test
+    @DisplayName("겹치는 시간대의 Promotion이 REJECTED/EXPIRED/ACCEPTED 등 terminal 상태이면 새로운 승급을 시도한다")
+    void tryPromote_WithOverlappingTerminalPromotion_ShouldStillAttemptPromotion() {
+        // given: existsOverlapping은 OFFERED만 조회하므로 terminal 상태의 Promotion은 대상에서 제외된다
+        Resource resource = resourceWithPolicy(10);
+        LocalDateTime endAt = LocalDateTime.now().plusMinutes(15);
+        WaitingQueue candidate = waitingQueue(WAITING_QUEUE_ID, user(2L), resource, WaitingQueueStatus.WAITING);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
+        when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of(WAITING_QUEUE_ID));
+        when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
+        stubPromotionSave();
+
+        // when
+        promotionService.tryPromote(RESOURCE_ID, START_AT, endAt);
+
+        // then
+        assertThat(candidate.getStatus()).isEqualTo(WaitingQueueStatus.PROMOTED);
+        verify(promotionRepository).save(any(WaitingQueuePromotion.class));
+    }
+
+    @Test
     @DisplayName("대기자가 없으면 아무 작업도 하지 않는다")
     void tryPromote_WithNoWaitingCandidate_ShouldDoNothing() {
         // given
@@ -252,8 +317,8 @@ class PromotionServiceTest {
         LocalDateTime endAt = LocalDateTime.now().plusMinutes(15);
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of());
 
         // when
@@ -273,8 +338,8 @@ class PromotionServiceTest {
         WaitingQueue candidate = waitingQueue(WAITING_QUEUE_ID, user(2L), resource, WaitingQueueStatus.WAITING);
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of(WAITING_QUEUE_ID));
         when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
 
@@ -299,7 +364,7 @@ class PromotionServiceTest {
 
         // then
         verify(promotionRepository, never())
-                .findByResourceIdAndStartAtAndEndAtAndStatus(any(), any(), any(), any());
+                .existsOverlapping(any(), any(), any(), any());
         verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
         verify(promotionLockRepository, never()).unlock(any(), any(), any(), any());
     }
@@ -313,8 +378,8 @@ class PromotionServiceTest {
         WaitingQueue candidate = waitingQueue(WAITING_QUEUE_ID, user(2L), resource, WaitingQueueStatus.WAITING);
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of(WAITING_QUEUE_ID));
         when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
         when(reservationSlotLockRepository.tryLockAll(RESOURCE_ID, START_AT, endAt)).thenReturn(Optional.empty());
@@ -340,8 +405,8 @@ class PromotionServiceTest {
         WaitingQueue candidate = waitingQueue(WAITING_QUEUE_ID, user(2L), resource, WaitingQueueStatus.WAITING);
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of(WAITING_QUEUE_ID));
         when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
         stubPromotionSave();
@@ -365,8 +430,8 @@ class PromotionServiceTest {
         WaitingQueue secondCandidate = waitingQueue(WAITING_QUEUE_ID, user(3L), resource, WaitingQueueStatus.WAITING);
 
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, endAt, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT))
                 .thenReturn(List.of(300L, WAITING_QUEUE_ID));
         when(waitingQueueRepository.findById(300L)).thenReturn(Optional.of(cancelledFirst));
@@ -600,8 +665,8 @@ class PromotionServiceTest {
         when(promotionRepository.findByIdAndUserId(PROMOTION_ID, CURRENT_USER_ID)).thenReturn(Optional.of(promotion));
         when(promotionRepository.findById(PROMOTION_ID)).thenReturn(Optional.of(promotion));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, END_AT, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, END_AT)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of());
 
         // when
@@ -858,8 +923,8 @@ class PromotionServiceTest {
         ReflectionTestUtils.setField(reservation, "id", 9001L);
         when(reservationRepository.findById(9001L)).thenReturn(Optional.of(reservation));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, END_AT, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, END_AT)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of());
 
         // when
@@ -935,8 +1000,8 @@ class PromotionServiceTest {
 
         when(promotionRepository.findById(PROMOTION_ID)).thenReturn(Optional.of(promotion));
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
-        when(promotionRepository.findByResourceIdAndStartAtAndEndAtAndStatus(
-                RESOURCE_ID, START_AT, END_AT, PromotionStatus.OFFERED)).thenReturn(Optional.empty());
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, END_AT)).thenReturn(false);
         when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of());
 
         // when

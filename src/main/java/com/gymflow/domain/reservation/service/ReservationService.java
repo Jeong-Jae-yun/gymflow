@@ -185,6 +185,9 @@ public class ReservationService {
             if (hasConflict) {
                 throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
             }
+            if (promotionService.hasActiveOffer(resource.getId(), deltaStart, newEndAt)) {
+                throw new BusinessException(ErrorCode.RESERVATION_PROMOTION_RESERVED);
+            }
 
             reservation.extend(newEndAt);
             reservationRepository.save(reservation);
