@@ -270,7 +270,7 @@ QueueItem은 WaitingQueue 외부에서 독립적으로 존재할 수 없다.
 ### Business Rules
 
 - 하나의 Resource와 TimeSlot마다 하나의 WaitingQueue가 존재한다.
-- 동일한 사용자는 같은 WaitingQueue에 중복 등록할 수 없다.
+- 동일한 사용자는 같은 WaitingQueue에 중복 등록할 수 없다. 이 중복 등록 검사와 저장 사이의 동시성 경합(같은 사용자가 동일 Resource/시간대에 동시에 여러 번 요청하는 경우)은 전용 Redis Lock(`gymflow:lock:waiting-queue:{userId}:{resourceId}:{startAt}:{endAt}`, `WaitingQueueRegistrationLock`)으로 직렬화한다. 이 Lock은 `ReservationSlotLock`과 달리 Resource 시간 점유권이 아니라 "같은 사용자의 같은 등록 요청" 단위를 보호하므로, 서로 다른 사용자의 동일 시간대 대기열 등록이나 같은 사용자의 다른 시간대 등록은 서로 직렬화되지 않는다. WAITING 상태만 중복 등록 차단 대상이며, CANCELLED 이력이 있어도 동일 시간대 재등록은 허용되므로 DB UNIQUE 제약 대신 Lock + WAITING 상태 재조회 조합을 사용한다.
 - QueueItem은 등록 순서를 유지한다.
 - CONFIRMED → NO_SHOW 또는 CONFIRMED → CANCELLED로 빈 슬롯이 발생하면 가장 앞의 WaitingQueue가 승급(PROMOTED) 대상이 된다.
 - WaitingQueue의 PROMOTED는 "예약 우선 기회를 받음"을 의미할 뿐 예약 생성 완료를 의미하지 않는다. 실제 수락/거절/응답 timeout은 별도의 WaitingQueuePromotion Aggregate가 관리한다.
