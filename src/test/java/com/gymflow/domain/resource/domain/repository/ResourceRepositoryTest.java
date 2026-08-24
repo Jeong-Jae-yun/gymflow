@@ -4,6 +4,7 @@ import com.gymflow.TestcontainersConfiguration;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
+import com.gymflow.global.config.JpaAuditingConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, JpaAuditingConfig.class})
 class ResourceRepositoryTest {
 
     @Autowired

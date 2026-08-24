@@ -65,7 +65,7 @@ public class WaitingQueueService {
         }
 
         boolean reservationAvailable = !reservationRepository.existsOverlapping(
-                resource.getId(), ReservationStatus.CONFIRMED, startAt, endAt);
+                resource.getId(), ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
         if (reservationAvailable) {
             throw new BusinessException(ErrorCode.WAITING_QUEUE_NOT_AVAILABLE);
         }

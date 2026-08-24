@@ -19,6 +19,7 @@ import com.gymflow.domain.usagehistory.domain.entity.UsageHistory;
 import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
+import com.gymflow.domain.waitingqueue.service.PromotionService;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
 import com.gymflow.global.security.SecurityUtils;
@@ -46,6 +47,7 @@ public class ReservationService {
     private final ReservationLockRepository reservationLockRepository;
     private final ReservationNoShowRepository reservationNoShowRepository;
     private final ResourceRankingRedisRepository resourceRankingRedisRepository;
+    private final PromotionService promotionService;
 
     @Transactional
     public ReservationResponse createReservation(ReservationCreateRequest request) {
@@ -79,6 +81,9 @@ public class ReservationService {
                     resource.getId(), ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
             if (hasConflict) {
                 throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+            }
+            if (promotionService.hasActiveOffer(resource.getId(), startAt, endAt)) {
+                throw new BusinessException(ErrorCode.RESERVATION_PROMOTION_RESERVED);
             }
 
             User user = userRepository.getReferenceById(currentUserId);
@@ -131,6 +136,7 @@ public class ReservationService {
 
         reservation.cancel(request.cancelReason());
         removeNoShowKey(reservation.getId());
+        tryPromoteWaitingQueue(reservation);
 
         return ReservationMapper.toResponse(reservation);
     }
@@ -198,8 +204,12 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.RESERVATION_NOT_CHECKINABLE);
         }
 
-        reservation.checkIn();
-        removeNoShowKey(reservation.getId());
+        LocalDateTime now = LocalDateTime.now();
+        boolean checkedInByPromotion = promotionService.checkInPromotedReservation(reservation, now);
+        if (!checkedInByPromotion) {
+            reservation.checkIn(now);
+            removeNoShowKey(reservation.getId());
+        }
 
         return ReservationMapper.toResponse(reservation);
     }
@@ -235,6 +245,7 @@ public class ReservationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_NOT_FOUND));
 
         reservation.noShow(LocalDateTime.now());
+        tryPromoteWaitingQueue(reservation);
 
         return ReservationMapper.toResponse(reservation);
     }
@@ -244,12 +255,22 @@ public class ReservationService {
         reservationRepository.findById(reservationId).ifPresent(reservation -> {
             if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
                 reservation.noShow(LocalDateTime.now());
+                tryPromoteWaitingQueue(reservation);
             }
         });
     }
 
+    private void tryPromoteWaitingQueue(Reservation reservation) {
+        try {
+            promotionService.tryPromote(
+                    reservation.getResource().getId(), reservation.getStartAt(), reservation.getEndAt());
+        } catch (RuntimeException e) {
+            log.error("WaitingQueue 자동 승급 처리 중 오류가 발생했습니다. reservationId={}", reservation.getId(), e);
+        }
+    }
+
     private void registerNoShowKey(Long reservationId, LocalDateTime startAt) {
-        Duration ttl = Duration.between(LocalDateTime.now(), startAt.plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES));
+        Duration ttl = Duration.between(LocalDateTime.now(), startAt);
         if (ttl.isZero() || ttl.isNegative()) {
             log.warn("NO_SHOW 가능 시점이 이미 지나 Redis Key를 등록하지 않습니다. reservationId={}", reservationId);
             return;

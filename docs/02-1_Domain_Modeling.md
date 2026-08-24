@@ -238,7 +238,7 @@ CONFIRMED
 NO_SHOW
 
 
-NO_SHOW는 예약 시작 시각(startAt)부터 5분의 유예시간 내에 체크인하지 않은 경우의 상태이다.
+NO_SHOW는 체크인 허용 시간(startAt - 5분 ~ startAt) 내에 체크인하지 않고 startAt이 지난 경우의 상태이다.
 
 COMPLETED는 체크인 후 정상적으로 체크아웃을 완료한 경우의 상태이다.
 

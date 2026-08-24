@@ -4,5 +4,6 @@ public enum CancelReason {
     PERSONAL_REASON,
     SCHEDULE_CHANGE,
     WRONG_RESERVATION,
-    OTHER
+    OTHER,
+    PROMOTION_CHECKIN_TIMEOUT
 }

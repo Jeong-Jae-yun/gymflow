@@ -27,8 +27,8 @@ import static org.awaitility.Awaitility.await;
  * 실제 Testcontainers Redis + 실제 Spring 컨텍스트(RedisMessageListenerContainer,
  * ReservationNoShowListener)를 사용해 "Redis TTL 만료 -> 실제 Listener 동작 -> Reservation
  * 상태 변경"까지의 배선(wiring) 전체가 실제로 동작하는지 검증한다. Reservation.noShow(now)
- * 자체의 5분 그레이스 기간 불변식은 ReservationTest에서 이미 충분히 검증되어 있으므로,
- * 여기서는 실제 5분을 기다리는 대신 짧은 TTL을 직접 등록해 인프라 배선만 검증한다.
+ * 자체의 startAt 기준 불변식은 ReservationTest에서 이미 충분히 검증되어 있으므로,
+ * 여기서는 실제 startAt까지 기다리는 대신 짧은 TTL을 직접 등록해 인프라 배선만 검증한다.
  */
 @SpringBootTest
 @Import(TestcontainersConfiguration.class)
@@ -102,7 +102,7 @@ class ReservationNoShowIntegrationTest {
                 .startAt(startAt)
                 .endAt(startAt.plusMinutes(15))
                 .build();
-        reservation.checkIn();
+        reservation.checkIn(reservation.getStartAt());
         Reservation savedReservation = reservationRepository.save(reservation);
 
         // when

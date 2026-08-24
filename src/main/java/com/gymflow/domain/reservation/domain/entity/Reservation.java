@@ -23,7 +23,7 @@ import java.util.UUID;
 public class Reservation extends BaseEntity {
 
     public static final int MAX_EXTENSION_COUNT = 2;
-    public static final int NO_SHOW_GRACE_MINUTES = 5;
+    public static final int CHECK_IN_WINDOW_MINUTES = 5;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -145,13 +145,31 @@ public class Reservation extends BaseEntity {
         this.extensionCount++;
     }
 
-    public void checkIn() {
+    public void checkIn(LocalDateTime now) {
         if (status != ReservationStatus.CONFIRMED) {
             throw new IllegalStateException("CONFIRMED 상태의 예약만 체크인할 수 있습니다.");
         }
+        if (now.isBefore(startAt.minusMinutes(CHECK_IN_WINDOW_MINUTES))) {
+            throw new IllegalStateException("체크인 가능 시간이 아직 되지 않았습니다.");
+        }
+        if (now.isAfter(startAt)) {
+            throw new IllegalStateException("체크인 가능 시간이 지났습니다.");
+        }
 
         this.status = ReservationStatus.CHECKED_IN;
-        this.checkInAt = LocalDateTime.now();
+        this.checkInAt = now;
+    }
+
+    public void checkInByPromotion(LocalDateTime now, LocalDateTime deadline) {
+        if (status != ReservationStatus.CONFIRMED) {
+            throw new IllegalStateException("CONFIRMED 상태의 예약만 체크인할 수 있습니다.");
+        }
+        if (now.isAfter(deadline)) {
+            throw new IllegalStateException("Promotion 체크인 가능 시간이 지났습니다.");
+        }
+
+        this.status = ReservationStatus.CHECKED_IN;
+        this.checkInAt = now;
     }
 
     public void checkOut() {
@@ -167,7 +185,7 @@ public class Reservation extends BaseEntity {
         if (status != ReservationStatus.CONFIRMED) {
             throw new IllegalStateException("CONFIRMED 상태의 예약만 노쇼 처리할 수 있습니다.");
         }
-        if (now.isBefore(startAt.plusMinutes(NO_SHOW_GRACE_MINUTES))) {
+        if (now.isBefore(startAt)) {
             throw new IllegalStateException("체크인 허용 시간이 아직 지나지 않았습니다.");
         }
 

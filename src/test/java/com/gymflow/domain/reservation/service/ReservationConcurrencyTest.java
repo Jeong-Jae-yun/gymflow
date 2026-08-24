@@ -220,12 +220,17 @@ class ReservationConcurrencyTest {
         int threadCount = 8;
         Long resourceId = persistResourceWithPolicy("Extend Same Reservation " + System.nanoTime());
         Long userId = persistUser("extend-same-user-" + System.nanoTime() + "@gymflow.com");
-        LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
+        // 체크인 가능 시간(startAt - 5분 ~ startAt) 내에서 즉시 체크인할 수 있도록 startAt을 현재 시각 근처로 둔다
+        LocalDateTime startAt = LocalDateTime.now().plusMinutes(2);
 
         authenticateAs(userId);
         ReservationResponse created =
                 reservationService.createReservation(new ReservationCreateRequest(resourceId, startAt, 15));
-        reservationService.checkInReservation(created.reservationId());
+        // checkIn()은 DB에서 다시 조회(findByIdAndUserId)한 Reservation을 기준으로 응답하므로,
+        // 이 응답의 startAt은 MySQL이 실제로 저장한 정밀도(나노초보다 낮음)를 그대로 반영한다.
+        // 이후 비교의 기준값으로 원본 Java startAt 대신 이 값을 사용해 DB 정밀도 차이로 인한
+        // 실패를 피한다.
+        ReservationResponse checkedIn = reservationService.checkInReservation(created.reservationId());
         SecurityContextHolder.clearContext();
 
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
@@ -265,8 +270,11 @@ class ReservationConcurrencyTest {
         assertThat(successCount.get()).isEqualTo(1);
         assertThat(failureCount.get()).isEqualTo(threadCount - 1);
 
+        // MySQL DATETIME은 나노초(9자리) 정밀도의 Java LocalDateTime을 그대로 보존하지 않고
+        // 마이크로초 단위로 반올림/절삭해 저장한다(정확한 반올림 규칙에 의존하지 않기 위해
+        // DB 왕복을 이미 거친 checkedIn.startAt()을 기준값으로 사용한다).
         Reservation reservation = reservationRepository.findById(created.reservationId()).orElseThrow();
-        assertThat(reservation.getEndAt()).isEqualTo(startAt.plusMinutes(30));
+        assertThat(reservation.getEndAt()).isEqualTo(checkedIn.startAt().plusMinutes(30));
         assertThat(reservation.getExtensionCount()).isEqualTo(1);
     }
 
@@ -277,13 +285,17 @@ class ReservationConcurrencyTest {
         Long resourceId = persistResourceWithPolicy("Extend Adjacent Resource " + System.nanoTime());
         Long userAId = persistUser("extend-adjacent-user-a-" + System.nanoTime() + "@gymflow.com");
         Long userBId = persistUser("extend-adjacent-user-b-" + System.nanoTime() + "@gymflow.com");
-        LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
+        // 체크인 가능 시간(startAt - 5분 ~ startAt) 내에서 즉시 체크인할 수 있도록 startAt을 현재 시각 근처로 둔다
+        LocalDateTime startAt = LocalDateTime.now().plusMinutes(2);
 
-        // when: 기존 예약(14:00~14:15)을 체크인 후 14:00~14:30으로 연장한다
+        // when: 기존 예약을 체크인 후 15분 연장한다
         authenticateAs(userAId);
         ReservationResponse created =
                 reservationService.createReservation(new ReservationCreateRequest(resourceId, startAt, 15));
-        reservationService.checkInReservation(created.reservationId());
+        // checkIn()은 DB에서 다시 조회한 Reservation을 기준으로 응답하므로, 이 응답의 startAt은
+        // MySQL이 실제로 저장한 정밀도를 반영한다. 이후 비교의 기준값으로 사용해 DB 정밀도 차이로
+        // 인한 실패를 피한다.
+        ReservationResponse checkedIn = reservationService.checkInReservation(created.reservationId());
         ReservationResponse extended = reservationService.extendReservation(
                 created.reservationId(), new ReservationExtensionRequest(15));
         SecurityContextHolder.clearContext();
@@ -294,7 +306,7 @@ class ReservationConcurrencyTest {
         SecurityContextHolder.clearContext();
 
         // then: 경계가 맞닿는 두 예약 모두 정상적으로 저장되었다
-        assertThat(extended.endAt()).isEqualTo(startAt.plusMinutes(30));
+        assertThat(extended.endAt()).isEqualTo(checkedIn.startAt().plusMinutes(30));
         assertThat(reservationRepository.existsOverlapping(
                 resourceId, ReservationStatus.CONFIRMED, extended.endAt(), extended.endAt().plusMinutes(15)))
                 .isTrue();
@@ -307,7 +319,8 @@ class ReservationConcurrencyTest {
         Long resourceId = persistResourceWithPolicy("Extend Overlapping New Reservation " + System.nanoTime());
         Long userAId = persistUser("extend-overlap-user-a-" + System.nanoTime() + "@gymflow.com");
         Long userBId = persistUser("extend-overlap-user-b-" + System.nanoTime() + "@gymflow.com");
-        LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
+        // 체크인 가능 시간(startAt - 5분 ~ startAt) 내에서 즉시 체크인할 수 있도록 startAt을 현재 시각 근처로 둔다
+        LocalDateTime startAt = LocalDateTime.now().plusMinutes(2);
 
         authenticateAs(userAId);
         ReservationResponse created =

@@ -137,7 +137,7 @@ class WaitingQueueServiceTest {
         when(waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
                 eq(CURRENT_USER_ID), eq(RESOURCE_ID), eq(START_AT), eq(END_AT), eq(WaitingQueueStatus.WAITING)))
                 .thenReturn(false);
-        when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.CONFIRMED, START_AT, END_AT))
+        when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT))
                 .thenReturn(true);
     }
 
@@ -267,7 +267,7 @@ class WaitingQueueServiceTest {
         when(waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
                 CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, WaitingQueueStatus.WAITING))
                 .thenReturn(false);
-        when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.CONFIRMED, START_AT, END_AT))
+        when(reservationRepository.existsOverlapping(RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT))
                 .thenReturn(false);
 
         // when & then

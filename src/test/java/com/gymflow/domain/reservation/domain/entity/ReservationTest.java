@@ -444,32 +444,30 @@ class ReservationTest {
     }
 
     @Test
-    @DisplayName("CONFIRMED 상태의 Reservation은 체크인하면 CHECKED_IN 상태가 된다")
+    @DisplayName("startAt 이내에 체크인하면 CHECKED_IN 상태가 된다")
     void checkIn_WithConfirmedReservation_ShouldChangeStatusToCheckedIn() {
         // given
         Reservation reservation = confirmedReservation();
 
         // when
-        reservation.checkIn();
+        reservation.checkIn(reservation.getStartAt());
 
         // then
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
     }
 
     @Test
-    @DisplayName("체크인하면 checkInAt이 저장된다")
+    @DisplayName("체크인하면 now 시각이 checkInAt으로 저장된다")
     void checkIn_ShouldStoreCheckInAt() {
         // given
         Reservation reservation = confirmedReservation();
-        LocalDateTime before = LocalDateTime.now();
+        LocalDateTime now = reservation.getStartAt();
 
         // when
-        reservation.checkIn();
+        reservation.checkIn(now);
 
         // then
-        LocalDateTime after = LocalDateTime.now();
-        assertThat(reservation.getCheckInAt()).isNotNull();
-        assertThat(reservation.getCheckInAt()).isBetween(before, after);
+        assertThat(reservation.getCheckInAt()).isEqualTo(now);
     }
 
     @Test
@@ -477,7 +475,7 @@ class ReservationTest {
     void checkOut_WithCheckedInReservation_ShouldChangeStatusToCompleted() {
         // given
         Reservation reservation = confirmedReservation();
-        reservation.checkIn();
+        reservation.checkIn(reservation.getStartAt());
 
         // when
         reservation.checkOut();
@@ -491,7 +489,7 @@ class ReservationTest {
     void checkOut_ShouldStoreCheckOutAt() {
         // given
         Reservation reservation = confirmedReservation();
-        reservation.checkIn();
+        reservation.checkIn(reservation.getStartAt());
         LocalDateTime before = LocalDateTime.now();
 
         // when
@@ -510,7 +508,7 @@ class ReservationTest {
         Reservation reservation = confirmedReservation();
 
         // when
-        reservation.checkIn();
+        reservation.checkIn(reservation.getStartAt());
         reservation.checkOut();
 
         // then
@@ -522,10 +520,10 @@ class ReservationTest {
     void checkIn_WithAlreadyCheckedInReservation_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
-        reservation.checkIn();
+        reservation.checkIn(reservation.getStartAt());
 
         // when & then
-        assertThatThrownBy(reservation::checkIn)
+        assertThatThrownBy(() -> reservation.checkIn(reservation.getStartAt()))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
     }
@@ -547,7 +545,7 @@ class ReservationTest {
     void checkOut_WithCompletedReservation_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
-        reservation.checkIn();
+        reservation.checkIn(reservation.getStartAt());
         reservation.checkOut();
 
         // when & then
@@ -566,51 +564,88 @@ class ReservationTest {
         ReflectionTestUtils.setField(reservation, "status", status);
 
         // when & then
-        assertThatThrownBy(reservation::checkIn)
+        assertThatThrownBy(() -> reservation.checkIn(reservation.getStartAt()))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(status);
     }
 
     @Test
-    @DisplayName("CONFIRMED 상태에서 startAt + 5분 이전에는 NO_SHOW 처리할 수 없다")
-    void noShow_BeforeGracePeriodElapsed_ShouldThrowException() {
+    @DisplayName("startAt - 5분보다 이전에는 체크인할 수 없다")
+    void checkIn_BeforeCheckInWindow_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
-        LocalDateTime beforeGracePeriod = reservation.getStartAt()
-                .plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES)
+        LocalDateTime beforeWindow = reservation.getStartAt()
+                .minusMinutes(Reservation.CHECK_IN_WINDOW_MINUTES)
                 .minusSeconds(1);
 
         // when & then
-        assertThatThrownBy(() -> reservation.noShow(beforeGracePeriod))
+        assertThatThrownBy(() -> reservation.checkIn(beforeWindow))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
     }
 
     @Test
-    @DisplayName("startAt + 5분 시점에는 NO_SHOW 처리할 수 있다")
-    void noShow_AtGracePeriodBoundary_ShouldSucceed() {
+    @DisplayName("startAt - 5분 시점에는 체크인할 수 있다")
+    void checkIn_AtCheckInWindowLowerBoundary_ShouldSucceed() {
         // given
         Reservation reservation = confirmedReservation();
-        LocalDateTime atGracePeriod = reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES);
+        LocalDateTime atLowerBoundary = reservation.getStartAt().minusMinutes(Reservation.CHECK_IN_WINDOW_MINUTES);
 
         // when
-        reservation.noShow(atGracePeriod);
+        reservation.checkIn(atLowerBoundary);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("startAt 이후에는 체크인할 수 없다")
+    void checkIn_AfterStartAt_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime afterStartAt = reservation.getStartAt().plusSeconds(1);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.checkIn(afterStartAt))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("CONFIRMED 상태에서 startAt 이전에는 NO_SHOW 처리할 수 없다")
+    void noShow_BeforeStartAt_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime beforeStartAt = reservation.getStartAt().minusSeconds(1);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.noShow(beforeStartAt))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("startAt 시점에는 NO_SHOW 처리할 수 있다")
+    void noShow_AtStartAt_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+
+        // when
+        reservation.noShow(reservation.getStartAt());
 
         // then
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
     }
 
     @Test
-    @DisplayName("5분 초과 후에도 NO_SHOW 처리할 수 있다")
-    void noShow_AfterGracePeriodElapsed_ShouldSucceed() {
+    @DisplayName("startAt 이후에도 NO_SHOW 처리할 수 있다")
+    void noShow_AfterStartAt_ShouldSucceed() {
         // given
         Reservation reservation = confirmedReservation();
-        LocalDateTime afterGracePeriod = reservation.getStartAt()
-                .plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES)
-                .plusMinutes(10);
+        LocalDateTime afterStartAt = reservation.getStartAt().plusMinutes(10);
 
         // when
-        reservation.noShow(afterGracePeriod);
+        reservation.noShow(afterStartAt);
 
         // then
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
@@ -621,11 +656,10 @@ class ReservationTest {
     void noShow_WithCheckedInReservation_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
-        reservation.checkIn();
-        LocalDateTime afterGracePeriod = reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES);
+        reservation.checkIn(reservation.getStartAt());
 
         // when & then
-        assertThatThrownBy(() -> reservation.noShow(afterGracePeriod))
+        assertThatThrownBy(() -> reservation.noShow(reservation.getStartAt()))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
     }
@@ -637,12 +671,87 @@ class ReservationTest {
         // given
         Reservation reservation = confirmedReservation();
         ReflectionTestUtils.setField(reservation, "status", status);
-        LocalDateTime afterGracePeriod = reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES);
 
         // when & then
-        assertThatThrownBy(() -> reservation.noShow(afterGracePeriod))
+        assertThatThrownBy(() -> reservation.noShow(reservation.getStartAt()))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(status);
+    }
+
+    @Test
+    @DisplayName("Promotion 체크인: CONFIRMED 상태에서 deadline 이내면 CHECKED_IN이 된다")
+    void checkInByPromotion_WithinDeadline_ShouldChangeStatusToCheckedIn() {
+        // given: startAt이 이미 지난 뒤(Promotion ACCEPT가 startAt 이후 발생할 수 있음)에도 성공해야 한다
+        Reservation reservation = confirmedReservation();
+        LocalDateTime acceptedAt = reservation.getStartAt().plusMinutes(1);
+        LocalDateTime deadline = acceptedAt.plusMinutes(1);
+        LocalDateTime now = acceptedAt.plusSeconds(30);
+
+        // when
+        reservation.checkInByPromotion(now, deadline);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+        assertThat(reservation.getCheckInAt()).isEqualTo(now);
+    }
+
+    @Test
+    @DisplayName("Promotion 체크인: deadline 시각과 정확히 같으면 체크인에 성공한다")
+    void checkInByPromotion_AtDeadlineBoundary_ShouldSucceed() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime deadline = reservation.getStartAt().plusMinutes(2);
+
+        // when
+        reservation.checkInByPromotion(deadline, deadline);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("Promotion 체크인: deadline을 넘기면 체크인에 실패한다")
+    void checkInByPromotion_AfterDeadline_ShouldThrowException() {
+        // given
+        Reservation reservation = confirmedReservation();
+        LocalDateTime deadline = reservation.getStartAt().plusMinutes(2);
+        LocalDateTime afterDeadline = deadline.plusSeconds(1);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.checkInByPromotion(afterDeadline, deadline))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class,
+            names = {"CHECKED_IN", "COMPLETED", "CANCELLED", "NO_SHOW"})
+    @DisplayName("Promotion 체크인: CONFIRMED가 아닌 상태는 체크인할 수 없다")
+    void checkInByPromotion_WithNonConfirmedStatus_ShouldThrowException(ReservationStatus status) {
+        // given
+        Reservation reservation = confirmedReservation();
+        ReflectionTestUtils.setField(reservation, "status", status);
+        LocalDateTime deadline = reservation.getStartAt().plusMinutes(2);
+
+        // when & then
+        assertThatThrownBy(() -> reservation.checkInByPromotion(deadline, deadline))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(status);
+    }
+
+    @Test
+    @DisplayName("Promotion 체크인: 일반 체크인 시간창(startAt-5분~startAt)을 벗어나도 deadline 이내면 성공한다")
+    void checkInByPromotion_OutsideNormalCheckInWindow_ShouldStillSucceed() {
+        // given: 일반 checkIn()이라면 실패했을 startAt 이후 시각이지만, Promotion 체크인 정책에서는 성공해야 한다
+        Reservation reservation = confirmedReservation();
+        LocalDateTime now = reservation.getStartAt().plusSeconds(1);
+        LocalDateTime deadline = reservation.getStartAt().plusMinutes(1);
+
+        // when
+        reservation.checkInByPromotion(now, deadline);
+
+        // then
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
     }
 
     @Test
@@ -650,10 +759,10 @@ class ReservationTest {
     void checkIn_WithNoShowReservation_ShouldThrowException() {
         // given
         Reservation reservation = confirmedReservation();
-        reservation.noShow(reservation.getStartAt().plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES));
+        reservation.noShow(reservation.getStartAt());
 
         // when & then
-        assertThatThrownBy(reservation::checkIn)
+        assertThatThrownBy(() -> reservation.checkIn(reservation.getStartAt()))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
     }

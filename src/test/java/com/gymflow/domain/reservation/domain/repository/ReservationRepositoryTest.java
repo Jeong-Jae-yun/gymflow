@@ -7,6 +7,7 @@ import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.user.domain.entity.User;
+import com.gymflow.global.config.JpaAuditingConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -27,10 +28,11 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, JpaAuditingConfig.class})
 class ReservationRepositoryTest {
 
     @Autowired
@@ -38,6 +40,33 @@ class ReservationRepositoryTest {
 
     @Autowired
     private TestEntityManager entityManager;
+
+    @Test
+    @DisplayName("save() 이후 BaseEntity의 createdAt/updatedAt이 JPA Auditing으로 자동 설정된다")
+    void save_ShouldPopulateCreatedAtAndUpdatedAtViaAuditing() {
+        // given: @DataJpaTest는 JpaAuditingConfig(@EnableJpaAuditing)를 기본 component scan에서
+        // 제외하므로, Auditing이 실제로 동작하는지(=@Import(JpaAuditingConfig.class)가 유효한지)를
+        // 이 테스트가 대표로 검증한다.
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 10, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 10, 15))
+                .build();
+
+        // when
+        Reservation saved = reservationRepository.save(reservation);
+        entityManager.flush();
+        entityManager.clear();
+
+        // then
+        Reservation reloaded = reservationRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getCreatedAt()).isNotNull();
+        assertThat(reloaded.getUpdatedAt()).isNotNull();
+    }
 
     @Test
     @DisplayName("reservationBatchId에는 UNIQUE 제약조건이 없어 동일한 batchId로 여러 Reservation을 저장할 수 있다")
@@ -175,7 +204,7 @@ class ReservationRepositoryTest {
                 .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
                 .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
                 .build();
-        checkedIn.checkIn();
+        checkedIn.checkIn(checkedIn.getStartAt());
         reservationRepository.save(checkedIn);
         entityManager.flush();
 
@@ -204,7 +233,7 @@ class ReservationRepositoryTest {
                 .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
                 .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
                 .build();
-        checkedIn.checkIn();
+        checkedIn.checkIn(checkedIn.getStartAt());
         reservationRepository.save(checkedIn);
         entityManager.flush();
 
@@ -235,7 +264,7 @@ class ReservationRepositoryTest {
                 .endAt(LocalDateTime.of(2026, 8, 12, 14, 30))
                 .build();
         if (status == ReservationStatus.CHECKED_IN) {
-            existing.checkIn();
+            existing.checkIn(existing.getStartAt());
         }
         reservationRepository.save(existing);
         entityManager.flush();
@@ -295,7 +324,7 @@ class ReservationRepositoryTest {
                 .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
                 .endAt(LocalDateTime.of(2026, 8, 12, 14, 30))
                 .build();
-        checkedIn.checkIn();
+        checkedIn.checkIn(checkedIn.getStartAt());
         reservationRepository.save(checkedIn);
         entityManager.flush();
 
@@ -324,7 +353,7 @@ class ReservationRepositoryTest {
                 .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
                 .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
                 .build();
-        checkedIn.checkIn();
+        checkedIn.checkIn(checkedIn.getStartAt());
         Reservation saved = reservationRepository.save(checkedIn);
         entityManager.flush();
 
@@ -354,7 +383,7 @@ class ReservationRepositoryTest {
                 .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
                 .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
                 .build();
-        target.checkIn();
+        target.checkIn(target.getStartAt());
         Reservation other = Reservation.builder()
                 .reservationBatchId(UUID.randomUUID())
                 .user(user)
@@ -362,7 +391,7 @@ class ReservationRepositoryTest {
                 .startAt(LocalDateTime.of(2026, 8, 12, 14, 20))
                 .endAt(LocalDateTime.of(2026, 8, 12, 14, 40))
                 .build();
-        other.checkIn();
+        other.checkIn(other.getStartAt());
         Reservation savedTarget = reservationRepository.save(target);
         reservationRepository.save(other);
         entityManager.flush();
@@ -537,9 +566,38 @@ class ReservationRepositoryTest {
     }
 
     @Test
-    @DisplayName("예약을 연장하면 endAt과 extension_count가 실제 DB에 저장된다")
-    void extend_ShouldPersistEndAtAndExtensionCount() {
-        // given
+    @DisplayName("CHECKED_IN 상태의 예약을 연장하면 endAt과 extension_count가 실제 DB에 저장된다")
+    void extend_WithCheckedInReservation_ShouldPersistEndAtAndExtensionCount() {
+        // given: 연장은 CHECKED_IN 상태에서만 가능하므로 checkIn()을 먼저 거친다
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
+                .build();
+        Reservation saved = reservationRepository.save(reservation);
+        saved.checkIn(saved.getStartAt());
+        entityManager.flush();
+
+        // when
+        saved.extend(LocalDateTime.of(2026, 8, 12, 14, 30));
+        entityManager.flush();
+        entityManager.clear();
+
+        // then
+        Reservation reloaded = reservationRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ReservationStatus.CHECKED_IN);
+        assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
+        assertThat(reloaded.getExtensionCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CONFIRMED 상태의 예약은 extend()를 호출하면 저장 없이 예외가 발생한다")
+    void extend_WithConfirmedReservation_ShouldThrowExceptionAndNotPersist() {
+        // given: extend()는 CHECKED_IN 전용이며 CONFIRMED에서는 허용되지 않는다
         User user = persistUser();
         Resource resource = persistResource("Chest Press A-1");
         Reservation reservation = Reservation.builder()
@@ -552,15 +610,11 @@ class ReservationRepositoryTest {
         Reservation saved = reservationRepository.save(reservation);
         entityManager.flush();
 
-        // when
-        saved.extend(LocalDateTime.of(2026, 8, 12, 14, 30));
-        entityManager.flush();
-        entityManager.clear();
-
-        // then
-        Reservation reloaded = reservationRepository.findById(saved.getId()).orElseThrow();
-        assertThat(reloaded.getEndAt()).isEqualTo(LocalDateTime.of(2026, 8, 12, 14, 30));
-        assertThat(reloaded.getExtensionCount()).isEqualTo(1);
+        // when & then
+        assertThatThrownBy(() -> saved.extend(LocalDateTime.of(2026, 8, 12, 14, 30)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(saved.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+        assertThat(saved.getExtensionCount()).isZero();
     }
 
     @Test

@@ -9,6 +9,7 @@ import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
+import com.gymflow.global.config.JpaAuditingConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, JpaAuditingConfig.class})
 class WaitingQueueRepositoryTest {
 
     @Autowired

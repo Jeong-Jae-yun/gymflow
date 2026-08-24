@@ -11,6 +11,7 @@ import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
+import com.gymflow.domain.waitingqueue.service.PromotionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -69,6 +70,9 @@ class ReservationNoShowListenerTest {
     @Mock
     private ResourceRankingRedisRepository resourceRankingRedisRepository;
 
+    @Mock
+    private PromotionService promotionService;
+
     private ReservationNoShowListener listener;
 
     @BeforeEach
@@ -76,7 +80,7 @@ class ReservationNoShowListenerTest {
         ReservationService reservationService = new ReservationService(
                 reservationRepository, resourceRepository, userRepository,
                 usageHistoryRepository, reservationLockRepository, reservationNoShowRepository,
-                resourceRankingRedisRepository);
+                resourceRankingRedisRepository, promotionService);
         listener = new ReservationNoShowListener(new RedisMessageListenerContainer(), reservationService);
     }
 

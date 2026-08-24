@@ -303,6 +303,19 @@ class ReservationControllerTest {
     }
 
     @Test
+    @DisplayName("Promotion 체크인 deadline을 넘긴 요청은 500이 아니라 409 Conflict를 반환한다")
+    void checkIn_WithExpiredPromotionCheckInDeadline_ShouldReturnConflictNotServerError() throws Exception {
+        // given
+        when(reservationService.checkInReservation(100L))
+                .thenThrow(new BusinessException(ErrorCode.PROMOTION_CHECKIN_EXPIRED));
+
+        // when & then
+        mockMvc.perform(patch("/api/reservations/{reservationId}/check-in", 100L))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(ErrorCode.PROMOTION_CHECKIN_EXPIRED.getMessage()));
+    }
+
+    @Test
     @DisplayName("정상적인 체크아웃 요청은 200 OK와 COMPLETED 상태의 ReservationResponse를 반환한다")
     void checkOut_WithValidRequest_ShouldReturnOk() throws Exception {
         // given

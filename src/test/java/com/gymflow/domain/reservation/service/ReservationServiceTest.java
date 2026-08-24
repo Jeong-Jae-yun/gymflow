@@ -21,6 +21,7 @@ import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.domain.user.domain.repository.UserRepository;
+import com.gymflow.domain.waitingqueue.service.PromotionService;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
 import com.gymflow.global.security.principal.CustomUserDetails;
@@ -90,6 +91,9 @@ class ReservationServiceTest {
 
     @Mock
     private ResourceRankingRedisRepository resourceRankingRedisRepository;
+
+    @Mock
+    private PromotionService promotionService;
 
     @InjectMocks
     private ReservationService reservationService;
@@ -183,6 +187,50 @@ class ReservationServiceTest {
         assertThat(response.endAt()).isEqualTo(startAt.plusMinutes(30));
         verify(reservationLockRepository).tryLock(RESOURCE_ID, startAt, startAt.plusMinutes(30));
         verify(reservationLockRepository).unlock(RESOURCE_ID, startAt, startAt.plusMinutes(30), "lock-token");
+    }
+
+    @Test
+    @DisplayName("동일 시간대에 활성 OFFERED Promotion이 있으면 일반 예약 생성이 차단된다")
+    void createReservation_WithActiveOfferedPromotion_ShouldThrowException() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(false);
+        when(promotionService.hasActiveOffer(RESOURCE_ID, startAt, startAt.plusMinutes(30))).thenReturn(true);
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.createReservation(request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_PROMOTION_RESERVED);
+
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationLockRepository).unlock(eq(RESOURCE_ID), any(), any(), eq("lock-token"));
+    }
+
+    @Test
+    @DisplayName("활성 OFFERED Promotion이 없으면 일반 예약이 정상적으로 생성된다")
+    void createReservation_WithoutActiveOfferedPromotion_ShouldSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(false);
+        when(promotionService.hasActiveOffer(RESOURCE_ID, startAt, startAt.plusMinutes(30))).thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        ReservationResponse response = reservationService.createReservation(request);
+
+        // then
+        assertThat(response.reservationId()).isEqualTo(100L);
     }
 
     @Test
@@ -383,8 +431,8 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("NO_SHOW Redis TTL은 startAt + 5분을 기준으로 계산된다")
-    void createReservation_ShouldCalculateNoShowTtlFromStartAtPlusGracePeriod() {
+    @DisplayName("NO_SHOW Redis TTL은 startAt을 기준으로 계산된다")
+    void createReservation_ShouldCalculateNoShowTtlFromStartAt() {
         // given
         Resource resource = activeResourceWithPolicy(15, 60);
         LocalDateTime startAt = LocalDateTime.now().plusDays(1).withHour(14).withMinute(0).withSecond(0).withNano(0);
@@ -401,8 +449,7 @@ class ReservationServiceTest {
         // then
         ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
         verify(reservationNoShowRepository).register(eq(100L), ttlCaptor.capture());
-        Duration expectedTtl = Duration.between(
-                LocalDateTime.now(), startAt.plusMinutes(Reservation.NO_SHOW_GRACE_MINUTES));
+        Duration expectedTtl = Duration.between(LocalDateTime.now(), startAt);
         // 계산 시점(now())의 미세한 차이를 감안해 1초 오차까지 허용한다
         assertThat(ttlCaptor.getValue().minus(expectedTtl).abs()).isLessThan(Duration.ofSeconds(1));
     }
@@ -410,7 +457,7 @@ class ReservationServiceTest {
     @Test
     @DisplayName("NO_SHOW 가능 시점이 이미 지난 경우(TTL<=0) Redis Key를 등록하지 않는다")
     void createReservation_WithPastStartAt_ShouldNotRegisterNoShowKey() {
-        // given: startAt이 과거이므로 (startAt + 5분) - now는 음수(TTL<=0)가 된다
+        // given: startAt이 과거이므로 startAt - now는 음수(TTL<=0)가 된다
         Resource resource = activeResourceWithPolicy(15, 60);
         LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
         ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
@@ -679,6 +726,26 @@ class ReservationServiceTest {
         assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(response.cancelReason()).isEqualTo(CancelReason.SCHEDULE_CHANGE);
         verify(reservationNoShowRepository).remove(100L);
+        verify(promotionService).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
+    }
+
+    @Test
+    @DisplayName("WaitingQueue 자동 승급 처리 중 예외가 발생해도 예약 취소 자체는 성공한다")
+    void cancelReservation_WithPromotionFailure_ShouldStillSucceed() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        Reservation reservation = reservation(100L, resource, user(),
+                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        CancelReservationRequest request = new CancelReservationRequest(CancelReason.SCHEDULE_CHANGE);
+        doThrow(new RuntimeException("승급 처리 오류"))
+                .when(promotionService).tryPromote(any(), any(), any());
+
+        // when
+        ReservationResponse response = reservationService.cancelReservation(100L, request);
+
+        // then
+        assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED);
     }
 
     @Test
@@ -1059,10 +1126,10 @@ class ReservationServiceTest {
     @Test
     @DisplayName("CONFIRMED 상태의 예약은 정상적으로 체크인된다")
     void checkInReservation_WithConfirmedReservation_ShouldSucceed() {
-        // given
+        // given: 체크인 가능 시간(startAt - 5분 ~ startAt) 내에서 체크인할 수 있도록 startAt을 현재 시각 근처로 둔다
         Resource resource = activeResourceWithPolicy(15, 60);
-        Reservation reservation = reservation(100L, resource, user(),
-                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        LocalDateTime startAt = LocalDateTime.now().plusMinutes(2);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
 
         // when
@@ -1079,8 +1146,8 @@ class ReservationServiceTest {
     void checkInReservation_WithNoShowKeyRemovalFailure_ShouldStillSucceed() {
         // given
         Resource resource = activeResourceWithPolicy(15, 60);
-        Reservation reservation = reservation(100L, resource, user(),
-                LocalDateTime.of(2026, 8, 12, 10, 0), LocalDateTime.of(2026, 8, 12, 10, 30));
+        LocalDateTime startAt = LocalDateTime.now().plusMinutes(2);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         doThrow(new RedisConnectionFailureException("연결 실패")).when(reservationNoShowRepository).remove(100L);
 
@@ -1089,6 +1156,66 @@ class ReservationServiceTest {
 
         // then: MySQL 상태 변경(source of truth)은 Redis 장애와 무관하게 성공한다
         assertThat(response.status()).isEqualTo(ReservationStatus.CHECKED_IN);
+    }
+
+    @Test
+    @DisplayName("체크인 가능 시간이 아닌 예약은 체크인할 수 없다")
+    void checkInReservation_OutsideCheckInWindow_ShouldThrowException() {
+        // given: startAt이 이미 지나 체크인 허용 구간(startAt - 5분 ~ startAt)을 벗어난 상황
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(10);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.checkInReservation(100L))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    @DisplayName("Promotion으로 생성된 예약은 promotionService가 체크인을 처리하고 일반 checkIn/NO_SHOW Key 삭제는 수행되지 않는다")
+    void checkInReservation_WithPromotionReservation_ShouldDelegateToPromotionService() {
+        // given: startAt이 이미 지나 일반 checkIn()이라면 실패할 시각이지만, Promotion 체크인 정책이 적용되어야 한다
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(10);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(promotionService.checkInPromotedReservation(eq(reservation), any(LocalDateTime.class)))
+                .thenAnswer(invocation -> {
+                    Reservation target = invocation.getArgument(0);
+                    LocalDateTime now = invocation.getArgument(1);
+                    ReflectionTestUtils.setField(target, "status", ReservationStatus.CHECKED_IN);
+                    ReflectionTestUtils.setField(target, "checkInAt", now);
+                    return true;
+                });
+
+        // when
+        ReservationResponse response = reservationService.checkInReservation(100L);
+
+        // then
+        assertThat(response.status()).isEqualTo(ReservationStatus.CHECKED_IN);
+        verify(promotionService).checkInPromotedReservation(eq(reservation), any(LocalDateTime.class));
+        verify(reservationNoShowRepository, never()).remove(any());
+    }
+
+    @Test
+    @DisplayName("Promotion 체크인이 아니면(false 반환) 일반 checkIn 정책과 NO_SHOW Key 삭제가 수행된다")
+    void checkInReservation_WithNonPromotionReservation_ShouldUseNormalCheckIn() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.now().plusMinutes(2);
+        Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
+        when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
+        when(promotionService.checkInPromotedReservation(eq(reservation), any(LocalDateTime.class)))
+                .thenReturn(false);
+
+        // when
+        ReservationResponse response = reservationService.checkInReservation(100L);
+
+        // then
+        assertThat(response.status()).isEqualTo(ReservationStatus.CHECKED_IN);
+        verify(reservationNoShowRepository).remove(100L);
     }
 
     @Test
@@ -1278,6 +1405,7 @@ class ReservationServiceTest {
         // then
         assertThat(response.status()).isEqualTo(ReservationStatus.NO_SHOW);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
+        verify(promotionService).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
     }
 
     @Test
@@ -1295,9 +1423,9 @@ class ReservationServiceTest {
     @Test
     @DisplayName("체크인 허용 시간이 지나지 않은 예약을 NO_SHOW 처리하면 예외가 발생한다")
     void noShow_BeforeGracePeriodElapsed_ShouldThrowException() {
-        // given
+        // given: startAt이 아직 도래하지 않았으므로 NO_SHOW 처리할 수 없다
         Resource resource = activeResourceWithPolicy(15, 60);
-        LocalDateTime startAt = LocalDateTime.now().minusMinutes(1);
+        LocalDateTime startAt = LocalDateTime.now().plusMinutes(5);
         Reservation reservation = reservation(100L, resource, user(), startAt, startAt.plusMinutes(30));
         when(reservationRepository.findById(100L)).thenReturn(Optional.of(reservation));
 
@@ -1321,6 +1449,7 @@ class ReservationServiceTest {
 
         // then
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
+        verify(promotionService).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
     }
 
     @ParameterizedTest
