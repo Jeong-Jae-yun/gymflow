@@ -161,6 +161,7 @@ TimeSlot Value Object로 리팩터링할 수 있다.
 - 동일한 Resource는 동일한 시간에 점유 상태(CONFIRMED, CHECKED_IN)의 예약이 하나만 존재할 수 있다.
 - Resource의 예약 시간 충돌은 CONFIRMED 및 CHECKED_IN 상태의 Reservation을 모두 점유 상태로 간주하여 판단한다. CANCELLED, NO_SHOW, COMPLETED 상태의 Reservation은 충돌 검사 대상에서 제외된다.
 - 시간 구간이 정확히 맞닿는 예약(예: 14:00~14:15와 14:15~14:30)은 충돌로 보지 않는다.
+- Resource 시간 점유권을 획득/확장하는 모든 작업(예약 생성, 예약 연장, Promotion ACCEPT, Promotion OFFERED 생성)은 공통 `ReservationSlotLock` 경계를 공유한다. 요청 구간 `[startAt, endAt)`을 절대 5분 grid 슬롯(`gymflow:lock:reservation-slot:{resourceId}:{slotStart}`)들로 분해해 슬롯별로 Lock을 모두 획득해야 하며, 겹치는 두 시간 구간은 항상 최소 하나의 슬롯을 공유하도록 보장된다. 이전에는 `{resourceId}:{startAt}:{endAt}`을 그대로 Lock Key로 사용했으나, 이는 정확히 같은 시작/종료 시각의 요청만 직렬화할 뿐 겹치기만 하는 서로 다른 요청은 직렬화하지 못하는 한계(write-skew)가 있어 이 방식으로 대체되었다. 예약 연장은 새로 점유하는 구간(`oldEndAt ~ newEndAt`)만 Lock하며, 이미 점유 중인 `startAt ~ oldEndAt` 구간은 커밋된 상태에 대한 overlap 재검증만으로 충분히 보호된다.
 - 예약 생성 시 Resource는 예약 가능 상태여야 한다.
 - 예약 시간은 운영시간 내에 존재해야 한다.
 - 체크인은 예약 시작 시각(startAt) 5분 전부터 startAt까지만 가능하다. startAt까지 체크인하지 않으면 예약은 NO_SHOW 처리된다.
@@ -295,7 +296,8 @@ WaitingQueue의 승급 기회(OFFERED)를 수락(ACCEPTED)/거절(REJECTED)/응�
 - OFFERED 상태에만 Redis TTL(기본 최대 2분, `endAt - now - ReservationPolicy.minDuration`으로 상한을 재계산)이 걸리며, TTL 만료 시 EXPIRED로 전이되고 다음 대기자에게 자동으로 재승급을 시도한다.
 - ACCEPTED 시 신규 Reservation(CONFIRMED)이 생성되고 WaitingQueuePromotion과 1:1로 연결되며(`reservation_id`), 별도의 1분 Redis Check-In TTL이 부여된다. 그 안에 체크인하지 않으면 Reservation은 CANCELLED + `PROMOTION_CHECKIN_TIMEOUT` 사유로 취소되고 다음 대기자 승급이 다시 시도된다.
 - Promotion으로 생성된 Reservation의 체크인 가능 시간은 일반 예약(`startAt - 5분 ~ startAt`)과 다르다. Promotion ACCEPT는 startAt이 이미 지난 뒤에도 발생할 수 있으므로, 체크인 가능 시간은 **Promotion ACCEPT 시각(`acceptedAt`)부터 1분**으로 별도 계산한다(`Reservation.checkInByPromotion(now, deadline)`). ReservationService는 체크인 대상 Reservation이 ACCEPTED 상태의 WaitingQueuePromotion과 연결되어 있는지(`WaitingQueuePromotionRepository.findByReservationId`)로 두 정책을 구분하며, 일반 checkIn()의 시간창은 이 경우에도 변경되지 않는다.
-- 동일 Resource + 시간 구간에 동시에 여러 OFFERED가 생성되지 않도록 전용 Redis Lock(`gymflow:lock:promotion:{resourceId}:{startAt}:{endAt}`)으로 직렬화한다. 이 Lock은 Promotion 체크인과 Check-In TTL 만료 처리 사이의 경쟁도 동일하게 직렬화한다.
+- 동일 Resource + 시간 구간에 동시에 여러 OFFERED가 생성되지 않도록 전용 Redis Lock(`gymflow:lock:promotion:{resourceId}:{startAt}:{endAt}`, `PromotionLock`)으로 직렬화한다. 이 Lock은 Promotion 체크인과 Check-In TTL 만료 처리 사이의 경쟁도 동일하게 직렬화한다. `PromotionLock`은 Promotion 상태 전이(OFFERED/ACCEPTED/REJECTED/EXPIRED)만 보호하는 책임이며, Resource 시간 점유권 자체는 보호하지 않는다.
+- Promotion ACCEPT(신규 Reservation 생성)와 자동 OFFERED 생성은 Resource 시간 점유권을 변경하는 작업이므로, 일반 예약 생성/연장과 동일한 `ReservationSlotLock` 경계도 함께 사용한다. 두 Lock을 모두 사용하는 경로(ACCEPT, 자동 승급)는 항상 `PromotionLock`을 먼저 획득한 뒤 `ReservationSlotLock`을 획득하는 순서로 고정되어 있으며(해제는 역순), 프로젝트 전체에서 이 순서가 뒤바뀌는 경로는 없다(Deadlock 방지). 이렇게 겹치는 시간대의 일반 예약 생성과 Promotion OFFERED 생성/ACCEPT가 동시에 발생해도 `ReservationSlotLock`의 슬롯 경합으로 인해 둘 중 하나만 성립한다.
 - Promotion 체크인이 성공하면 Check-In TTL Key를 즉시 삭제해 불필요한 만료 이벤트가 발생하지 않도록 한다(Redis 삭제 실패는 fail-open으로 처리하고 MySQL CHECKED_IN 상태는 그대로 유지한다).
 - deadline을 넘긴 체크인 요청은 서버 오류가 아니라 `PROMOTION_CHECKIN_EXPIRED`(409 Conflict) Business Error로 응답한다. Service가 deadline을 먼저 검증해 API 레벨의 의미 있는 오류를 반환하고, `Reservation.checkInByPromotion()`의 동일한 시간 검증은 최종 방어선으로 유지한다.
 - MySQL이 Source of Truth이며 Redis는 순번(ZSET)·TTL·Lock·Pub/Sub 등 보조 수단으로만 사용한다.
