@@ -16,7 +16,7 @@ import java.util.UUID;
 @Repository
 public class PromotionLockRepository {
 
-    private static final Duration DEFAULT_LOCK_TTL = Duration.ofSeconds(3);
+    private static final Duration DEFAULT_LOCK_TTL = Duration.ofSeconds(5);
     private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>(
             "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
             Long.class);
