@@ -9,7 +9,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,14 +25,12 @@ public class AdminResourceController {
     private final AdminResourceService adminResourceService;
 
     @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<AdminResourceResponse> create(@Valid @RequestBody AdminResourceCreateRequest request) {
         AdminResourceResponse response = adminResourceService.createResource(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     @PutMapping("/{resourceId}")
-    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<AdminResourceResponse> update(
             @PathVariable Long resourceId, @Valid @RequestBody AdminResourceUpdateRequest request) {
         AdminResourceResponse response = adminResourceService.updateResource(resourceId, request);
@@ -41,7 +38,6 @@ public class AdminResourceController {
     }
 
     @PatchMapping("/{resourceId}/status")
-    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<AdminResourceResponse> changeStatus(
             @PathVariable Long resourceId, @Valid @RequestBody AdminResourceStatusUpdateRequest request) {
         AdminResourceResponse response = adminResourceService.changeStatus(resourceId, request);
