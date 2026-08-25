@@ -205,6 +205,13 @@ Resource 상태는 운영 상태만 표현한다.
 특정 시간대의 점유 여부는 Resource 상태가 아니라
 Reservation이 판단한다.
 
+관리자는 `PATCH /api/admin/resources/{resourceId}/status`로 ACTIVE/MAINTENANCE/INACTIVE 세 상태를
+자유롭게 전환할 수 있다. 다만 MAINTENANCE 또는 INACTIVE로 전환하려면 해당 Resource에 현재/미래
+점유 Reservation(`CONFIRMED`/`CHECKED_IN` 중 `endAt > now`)과 활성 `WaitingQueuePromotion`(`OFFERED`
+중 `expiresAt > now`)이 존재하지 않아야 하며, 존재하면 409 `RESOURCE_STATUS_CHANGE_NOT_ALLOWED`로
+거부된다. 동일한 상태로의 변경 요청은 충돌 검사 없이 idempotent하게 성공한다. GymFlow는 별도의
+Resource 물리 삭제 API를 두지 않으며, INACTIVE 상태를 삭제를 대체하는 상태로 사용한다.
+
 
 Reservation 상태:
 
@@ -563,6 +570,14 @@ maxDuration
 
 ReservationPolicy는 독립적인 예약 대상이 아니며,
 반드시 하나의 Resource에 종속된다(1:1).
+
+Resource는 `POST /api/admin/resources`로 ReservationPolicy와 함께 생성되며, `type`은 생성 시 필수이고
+생성 이후에는 변경할 수 없다(`PUT /api/admin/resources/{resourceId}`의 수정 대상은 name/capacity/
+description/ReservationPolicy로 한정된다). 관리자가 ReservationPolicy(slotDuration/minDuration/
+maxDuration)를 변경해도 이미 생성된 Reservation/WaitingQueue/OFFERED Promotion의 startAt/endAt은
+소급 변경되지 않으며, 변경된 정책은 이후 신규 Reservation 생성과 기존 CHECKED_IN Reservation의 연장
+요청부터 적용된다. Resource 수정 및 상태 변경 성공 시에는 `ResourceCacheRepository.evict()`로 Redis
+Resource Cache를 무효화하며, Redis 장애 시에도 MySQL 변경은 유지되는 Fail-Open으로 처리한다.
 
 Reservation은 Resource 하위에 별도의 Profile Entity를 두지 않고
 항상 Resource만 참조한다.

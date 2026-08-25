@@ -95,6 +95,12 @@ OperatingHours
 - 비활성화된 Resource는 예약 대상이 아니다.
 - 운영시간 외에는 예약할 수 없다.
 - Resource 상태 변경은 Reservation 상태를 직접 변경하지 않는다.
+- Resource는 ADMIN만 관리할 수 있다(`/api/admin/resources/**`, `@PreAuthorize("hasRole('ADMIN')")`). 생성(`POST`)은 Resource와 ReservationPolicy를 하나의 트랜잭션으로 함께 만들며, 초기 status는 클라이언트 입력과 무관하게 서버에서 ACTIVE로 고정한다. `type`은 생성 시 필수이며 생성 이후에는 변경할 수 없다(`PUT`의 수정 대상은 name/capacity/description/ReservationPolicy로 한정되고, status는 별도의 `PATCH .../status` API로만 변경한다).
+- 물리 DELETE API는 두지 않으며, INACTIVE 상태를 삭제를 대체하는 상태로 사용한다.
+- ReservationPolicy(slotDuration/minDuration/maxDuration)는 `maxDuration >= minDuration`, `minDuration % slotDuration == 0`, `maxDuration % slotDuration == 0`을 만족해야 하며(위반 시 400 `INVALID_RESERVATION_POLICY`), 이 조합 검증은 Service 레벨에서 수행한다(Entity 자체는 각 값의 양수 여부와 `minDuration <= maxDuration`만 보장한다). ReservationPolicy를 변경해도 이미 생성된 Reservation/WaitingQueue/OFFERED Promotion의 startAt/endAt은 소급 변경되지 않으며, 변경된 정책은 이후 신규 Reservation 생성과 기존 CHECKED_IN Reservation의 연장 요청부터 적용된다.
+- Resource를 MAINTENANCE 또는 INACTIVE로 전환하려면, 현재/미래 점유 Reservation(`CONFIRMED`/`CHECKED_IN` 중 `endAt > now`)과 활성 `WaitingQueuePromotion`(`OFFERED` 중 `expiresAt > now`)이 존재하지 않아야 한다. 존재하면 409 `RESOURCE_STATUS_CHANGE_NOT_ALLOWED`로 거부되며, 동일한 상태로의 변경 요청은 이 검사 없이 idempotent하게 성공한다. ACTIVE로의 전환은 점유 충돌이 발생할 수 없으므로 이 검사 대상이 아니다.
+- Resource 수정 및 상태 변경 성공 시 `ResourceCacheRepository.evict()`로 Redis Resource Cache를 무효화한다. Redis 장애로 evict가 실패해도 MySQL 변경 사항은 유지되는 Fail-Open으로 처리하며, 예외를 상위로 전파하지 않는다(생성은 기존 캐시 엔트리가 없으므로 evict 대상이 아니다).
+- 관리자 상태 변경(점유 여부 조회 → 상태 변경)과 일반 예약 생성(`ReservationSlotLock` 기반)은 서로 다른 concurrency boundary를 사용하므로, 두 요청이 거의 동시에 발생하면 관리자가 점유 없음을 확인한 직후 새 Reservation이 커밋되어 상태 변경이 성공한 뒤에도 Resource가 점유된 상태로 남는 write-skew가 이론적으로 가능하다. 이번 범위에서는 이 경합을 막는 별도의 Lock을 추가하지 않았다.
 
 ---
 

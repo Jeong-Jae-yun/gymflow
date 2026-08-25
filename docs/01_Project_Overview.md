@@ -11,7 +11,7 @@
 | Document | Project Overview |
 | Version | v1.0             |
 | Author | 정재윤              |
-| Last Updated | 2026-08-24       |
+| Last Updated | 2026-08-25       |
 ---
 
 # 1. 프로젝트 소개
@@ -239,10 +239,10 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 ### Resource 관리
 
-- 등록
-- 수정
-- 삭제
-- 점검 모드
+- 등록 (Resource + ReservationPolicy 동시 생성, 초기 상태는 ACTIVE로 서버에서 고정)
+- 수정 (name/capacity/description/ReservationPolicy, type과 status는 별도 정책으로 관리)
+- 삭제 (물리 삭제 없이 INACTIVE 상태로 대체)
+- 점검 모드 (ACTIVE ↔ MAINTENANCE ↔ INACTIVE 상태 변경, 활성 예약/승급 제안이 있으면 차단)
 - 예약 제한
 
 ---
