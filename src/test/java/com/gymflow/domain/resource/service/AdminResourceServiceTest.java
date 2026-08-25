@@ -6,6 +6,7 @@ import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
+import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.resource.dto.request.AdminResourceCreateRequest;
@@ -52,6 +53,9 @@ class AdminResourceServiceTest {
 
     @Mock
     private PromotionService promotionService;
+
+    @Mock
+    private ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
 
     @Mock
     private ResourceCacheRepository resourceCacheRepository;
@@ -302,6 +306,7 @@ class AdminResourceServiceTest {
         // given
         Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.of("lock-token"));
         when(reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(eq(RESOURCE_ID), anyCollection(), any()))
                 .thenReturn(false);
         when(promotionService.hasActiveOfferedPromotion(eq(RESOURCE_ID), any())).thenReturn(false);
@@ -313,6 +318,7 @@ class AdminResourceServiceTest {
         // then
         assertThat(response.status()).isEqualTo(ResourceStatus.MAINTENANCE);
         verify(resourceCacheRepository).evict(RESOURCE_ID);
+        verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "lock-token");
     }
 
     @Test
@@ -321,6 +327,7 @@ class AdminResourceServiceTest {
         // given
         Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.of("lock-token"));
         when(reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(eq(RESOURCE_ID), anyCollection(), any()))
                 .thenReturn(false);
         when(promotionService.hasActiveOfferedPromotion(eq(RESOURCE_ID), any())).thenReturn(false);
@@ -348,6 +355,7 @@ class AdminResourceServiceTest {
         assertThat(response.status()).isEqualTo(ResourceStatus.ACTIVE);
         verify(reservationRepository, never()).existsByResourceIdAndStatusInAndEndAtAfter(any(), any(), any());
         verify(promotionService, never()).hasActiveOfferedPromotion(any(), any());
+        verify(resourceAvailabilityLockRepository, never()).tryLock(any());
     }
 
     @Test
@@ -364,6 +372,7 @@ class AdminResourceServiceTest {
         // then
         assertThat(response.status()).isEqualTo(ResourceStatus.ACTIVE);
         verify(reservationRepository, never()).existsByResourceIdAndStatusInAndEndAtAfter(any(), any(), any());
+        verify(resourceAvailabilityLockRepository, never()).tryLock(any());
     }
 
     @ParameterizedTest
@@ -382,6 +391,7 @@ class AdminResourceServiceTest {
         assertThat(response.status()).isEqualTo(status);
         verify(reservationRepository, never()).existsByResourceIdAndStatusInAndEndAtAfter(any(), any(), any());
         verify(promotionService, never()).hasActiveOfferedPromotion(any(), any());
+        verify(resourceAvailabilityLockRepository, never()).tryLock(any());
     }
 
     @Test
@@ -403,6 +413,7 @@ class AdminResourceServiceTest {
         // given
         Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.of("lock-token"));
         when(reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(
                 eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any())).thenReturn(true);
 
@@ -413,6 +424,7 @@ class AdminResourceServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_STATUS_CHANGE_NOT_ALLOWED);
         assertThat(resource.getStatus()).isEqualTo(ResourceStatus.ACTIVE);
         verify(resourceCacheRepository, never()).evict(any());
+        verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "lock-token");
     }
 
     @Test
@@ -421,6 +433,7 @@ class AdminResourceServiceTest {
         // given
         Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.of("lock-token"));
         when(reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(
                 eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any())).thenReturn(true);
 
@@ -437,6 +450,7 @@ class AdminResourceServiceTest {
         // given
         Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.of("lock-token"));
         when(reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(
                 eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any())).thenReturn(false);
         when(promotionService.hasActiveOfferedPromotion(eq(RESOURCE_ID), any())).thenReturn(false);
@@ -455,6 +469,7 @@ class AdminResourceServiceTest {
         // given
         Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.of("lock-token"));
         when(reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(
                 eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any())).thenReturn(false);
         when(promotionService.hasActiveOfferedPromotion(eq(RESOURCE_ID), any())).thenReturn(true);
@@ -474,6 +489,7 @@ class AdminResourceServiceTest {
         // given
         Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
         when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.of("lock-token"));
         when(reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(eq(RESOURCE_ID), anyCollection(), any()))
                 .thenReturn(false);
         when(promotionService.hasActiveOfferedPromotion(eq(RESOURCE_ID), any())).thenReturn(false);
@@ -486,5 +502,24 @@ class AdminResourceServiceTest {
         // then
         assertThat(response.status()).isEqualTo(ResourceStatus.MAINTENANCE);
         assertThat(resource.getStatus()).isEqualTo(ResourceStatus.MAINTENANCE);
+    }
+
+    @Test
+    @DisplayName("ResourceAvailabilityLock 획득에 실패하면 상태 변경을 진행하지 않는다 (Fail-Closed)")
+    void changeStatus_WhenAvailabilityLockAcquisitionFails_ShouldNotChangeStatus() {
+        // given
+        Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> adminResourceService.changeStatus(
+                RESOURCE_ID, new AdminResourceStatusUpdateRequest(ResourceStatus.MAINTENANCE)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
+        assertThat(resource.getStatus()).isEqualTo(ResourceStatus.ACTIVE);
+        verify(reservationRepository, never()).existsByResourceIdAndStatusInAndEndAtAfter(any(), any(), any());
+        verify(resourceCacheRepository, never()).evict(any());
+        verify(resourceAvailabilityLockRepository, never()).unlock(any(), any());
     }
 }

@@ -8,7 +8,9 @@ import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockRepository
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
+import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
+import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.enumtype.UserRole;
@@ -91,6 +93,9 @@ class PromotionServiceTest {
     private WaitingQueueRedisRepository waitingQueueRedisRepository;
 
     @Mock
+    private ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
+
+    @Mock
     private PromotionLockRepository promotionLockRepository;
 
     @Mock
@@ -120,6 +125,8 @@ class PromotionServiceTest {
         // accept()/tryPromote()를 다루지 않는 테스트에서는 사용되지 않으므로 lenient로 등록한다
         lenient().when(reservationSlotLockRepository.tryLockAll(any(), any(), any()))
                 .thenReturn(Optional.of(SLOT_LOCK_HANDLE));
+        lenient().when(resourceAvailabilityLockRepository.tryLock(any()))
+                .thenReturn(Optional.of("availability-lock-token"));
     }
 
     @AfterEach
@@ -393,6 +400,70 @@ class PromotionServiceTest {
                 .existsOverlapping(any(), any(), any(), any());
         verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
         verify(promotionLockRepository, never()).unlock(any(), any(), any(), any());
+        // ResourceAvailabilityLock은 이미 획득했으므로 반드시 해제되어야 한다
+        verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "availability-lock-token");
+    }
+
+    @Test
+    @DisplayName("ResourceAvailabilityLock 획득에 실패하면 승급을 건너뛰고 Resource 조회조차 하지 않는다")
+    void tryPromote_WithAvailabilityLockAcquisitionFailure_ShouldSkip() {
+        // given
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.empty());
+
+        // when
+        promotionService.tryPromote(RESOURCE_ID, START_AT, END_AT);
+
+        // then
+        verify(resourceRepository, never()).findWithReservationPolicyById(any());
+        verify(promotionLockRepository, never()).tryLock(any(), any(), any());
+        verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
+        verify(resourceAvailabilityLockRepository, never()).unlock(any(), any());
+    }
+
+    @Test
+    @DisplayName("Resource가 ACTIVE 상태가 아니면 승급을 시도하지 않는다")
+    void tryPromote_WithInactiveResource_ShouldSkip() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        ReflectionTestUtils.setField(resource, "status", ResourceStatus.MAINTENANCE);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when
+        promotionService.tryPromote(RESOURCE_ID, START_AT, END_AT);
+
+        // then
+        verify(promotionLockRepository, never()).tryLock(any(), any(), any());
+        verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
+        // Resource 상태 확인 이후에도 ResourceAvailabilityLock은 반드시 해제되어야 한다
+        verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "availability-lock-token");
+    }
+
+    @Test
+    @DisplayName("Lock 획득 순서는 ResourceAvailabilityLock -> PromotionLock -> ReservationSlotLock이고 해제는 그 역순이다")
+    void tryPromote_ShouldAcquireAndReleaseLocksInFixedOrder() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        LocalDateTime endAt = LocalDateTime.now().plusMinutes(15);
+        WaitingQueue candidate = waitingQueue(WAITING_QUEUE_ID, user(2L), resource, WaitingQueueStatus.WAITING);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(promotionRepository.existsOverlapping(
+                RESOURCE_ID, PromotionStatus.OFFERED, START_AT, endAt)).thenReturn(false);
+        when(waitingQueueRedisRepository.findAll(RESOURCE_ID, START_AT)).thenReturn(List.of(WAITING_QUEUE_ID));
+        when(waitingQueueRepository.findById(WAITING_QUEUE_ID)).thenReturn(Optional.of(candidate));
+        stubPromotionSave();
+
+        // when
+        promotionService.tryPromote(RESOURCE_ID, START_AT, endAt);
+
+        // then
+        InOrder inOrder = inOrder(resourceAvailabilityLockRepository, promotionLockRepository, reservationSlotLockRepository);
+        inOrder.verify(resourceAvailabilityLockRepository).tryLock(RESOURCE_ID);
+        inOrder.verify(promotionLockRepository).tryLock(RESOURCE_ID, START_AT, endAt);
+        inOrder.verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, START_AT, endAt);
+        inOrder.verify(reservationSlotLockRepository).unlockAll(SLOT_LOCK_HANDLE);
+        inOrder.verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, endAt, "lock-token");
+        inOrder.verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "availability-lock-token");
     }
 
     @Test
@@ -618,10 +689,35 @@ class PromotionServiceTest {
         verify(reservationRepository, never()).existsOverlapping(any(), anyCollection(), any(), any());
         verify(reservationRepository, never()).save(any(Reservation.class));
         verify(promotionLockRepository, never()).unlock(any(), any(), any(), any());
+        // ResourceAvailabilityLock은 이미 획득했으므로 반드시 해제되어야 한다
+        verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "availability-lock-token");
     }
 
     @Test
-    @DisplayName("Lock 획득 순서는 PromotionLock -> ReservationSlotLock이고 해제는 그 역순이다")
+    @DisplayName("ResourceAvailabilityLock 획득에 실패하면 RESERVATION_IN_PROGRESS 예외가 발생하고 PromotionLock을 시도하지 않는다")
+    void accept_WithAvailabilityLockAcquisitionFailure_ShouldThrowException() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        User currentUser = user(CURRENT_USER_ID);
+        WaitingQueue waitingQueue = waitingQueue(WAITING_QUEUE_ID, currentUser, resource, WaitingQueueStatus.PROMOTED);
+        WaitingQueuePromotion promotion = offeredPromotion(
+                PROMOTION_ID, waitingQueue, currentUser, resource, LocalDateTime.now().plusMinutes(1));
+
+        when(promotionRepository.findByIdAndUserId(PROMOTION_ID, CURRENT_USER_ID)).thenReturn(Optional.of(promotion));
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> promotionService.accept(PROMOTION_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
+
+        verify(promotionLockRepository, never()).tryLock(any(), any(), any());
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(resourceAvailabilityLockRepository, never()).unlock(any(), any());
+    }
+
+    @Test
+    @DisplayName("Lock 획득 순서는 ResourceAvailabilityLock -> PromotionLock -> ReservationSlotLock이고 해제는 그 역순이다")
     void accept_ShouldAcquireAndReleaseLocksInFixedOrder() {
         // given
         Resource resource = resourceWithPolicy(10);
@@ -643,12 +739,14 @@ class PromotionServiceTest {
         // when
         promotionService.accept(PROMOTION_ID);
 
-        // then: PromotionLock(상위) -> ReservationSlotLock(하위) 획득, 해제는 역순(ReservationSlotLock -> PromotionLock)
-        InOrder inOrder = inOrder(promotionLockRepository, reservationSlotLockRepository);
+        // then: ResourceAvailabilityLock -> PromotionLock -> ReservationSlotLock 순으로 획득되고 해제는 역순이다
+        InOrder inOrder = inOrder(resourceAvailabilityLockRepository, promotionLockRepository, reservationSlotLockRepository);
+        inOrder.verify(resourceAvailabilityLockRepository).tryLock(RESOURCE_ID);
         inOrder.verify(promotionLockRepository).tryLock(RESOURCE_ID, START_AT, END_AT);
         inOrder.verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, START_AT, END_AT);
         inOrder.verify(reservationSlotLockRepository).unlockAll(SLOT_LOCK_HANDLE);
         inOrder.verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, END_AT, "lock-token");
+        inOrder.verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "availability-lock-token");
     }
 
     @Test

@@ -139,6 +139,17 @@ class AdminResourceSecurityIntegrationTest {
     }
 
     @Test
+    @DisplayName("토큰 없이 Resource 수정을 요청하면 401 Unauthorized를 반환한다")
+    void update_WithoutToken_ShouldReturnUnauthorized() throws Exception {
+        Resource resource = persistResourceWithPolicy("No Token Update Target " + System.nanoTime());
+
+        mockMvc.perform(put("/api/admin/resources/{resourceId}", resource.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateRequestBody())))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     @DisplayName("ADMIN 권한으로 Resource 상태를 변경하면 200 OK를 반환한다")
     void changeStatus_WithAdminRole_ShouldReturnOk() throws Exception {
         Resource resource = persistResourceWithPolicy("Admin Status Target " + System.nanoTime());
@@ -160,5 +171,16 @@ class AdminResourceSecurityIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("status", "MAINTENANCE"))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("토큰 없이 Resource 상태 변경을 요청하면 401 Unauthorized를 반환한다")
+    void changeStatus_WithoutToken_ShouldReturnUnauthorized() throws Exception {
+        Resource resource = persistResourceWithPolicy("No Token Status Target " + System.nanoTime());
+
+        mockMvc.perform(patch("/api/admin/resources/{resourceId}/status", resource.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("status", "MAINTENANCE"))))
+                .andExpect(status().isUnauthorized());
     }
 }

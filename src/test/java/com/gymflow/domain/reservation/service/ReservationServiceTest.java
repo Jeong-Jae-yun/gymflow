@@ -15,6 +15,7 @@ import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
+import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.usagehistory.domain.entity.UsageHistory;
@@ -92,6 +93,9 @@ class ReservationServiceTest {
     private ReservationSlotLockRepository reservationSlotLockRepository;
 
     @Mock
+    private ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
+
+    @Mock
     private ReservationNoShowRepository reservationNoShowRepository;
 
     @Mock
@@ -113,6 +117,8 @@ class ReservationServiceTest {
         // createReservation을 다루지 않는 테스트에서는 사용되지 않으므로 lenient로 등록한다
         lenient().when(reservationSlotLockRepository.tryLockAll(any(), any(), any()))
                 .thenReturn(Optional.of(LOCK_HANDLE));
+        lenient().when(resourceAvailabilityLockRepository.tryLock(any()))
+                .thenReturn(Optional.of("availability-lock-token"));
     }
 
     @AfterEach
@@ -442,6 +448,53 @@ class ReservationServiceTest {
         verify(reservationRepository, never()).save(any(Reservation.class));
         // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
         verify(reservationSlotLockRepository, never()).unlockAll(any());
+    }
+
+    @Test
+    @DisplayName("ResourceAvailabilityLock 획득에 실패하면 RESERVATION_IN_PROGRESS 예외가 발생하고 " +
+            "Resource 조회/ReservationSlotLock 시도가 전혀 일어나지 않는다 (Fail-Closed)")
+    void createReservation_WithAvailabilityLockAcquisitionFailure_ShouldThrowReservationInProgress() {
+        // given
+        ReservationCreateRequest request =
+                new ReservationCreateRequest(RESOURCE_ID, LocalDateTime.of(2026, 8, 12, 10, 0), 30);
+        when(resourceAvailabilityLockRepository.tryLock(RESOURCE_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> reservationService.createReservation(request))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_IN_PROGRESS);
+
+        verify(resourceRepository, never()).findWithReservationPolicyById(any());
+        verify(reservationSlotLockRepository, never()).tryLockAll(any(), any(), any());
+        verify(reservationRepository, never()).save(any(Reservation.class));
+        // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
+        verify(resourceAvailabilityLockRepository, never()).unlock(any(), any());
+    }
+
+    @Test
+    @DisplayName("ResourceAvailabilityLock은 ReservationSlotLock보다 먼저 획득되고, 정상 처리 후 마지막에 해제된다")
+    void createReservation_ShouldAcquireAvailabilityLockBeforeSlotLockAndReleaseLast() {
+        // given
+        Resource resource = activeResourceWithPolicy(15, 60);
+        LocalDateTime startAt = LocalDateTime.of(2026, 8, 12, 10, 0);
+        ReservationCreateRequest request = new ReservationCreateRequest(RESOURCE_ID, startAt, 30);
+
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.existsOverlapping(eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(false);
+        when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
+        stubSave();
+
+        // when
+        reservationService.createReservation(request);
+
+        // then: ResourceAvailabilityLock -> ReservationSlotLock 순으로 획득되고,
+        // ReservationSlotLock -> ResourceAvailabilityLock 순으로(안쪽 Lock부터) 해제된다
+        InOrder inOrder = inOrder(resourceAvailabilityLockRepository, reservationSlotLockRepository);
+        inOrder.verify(resourceAvailabilityLockRepository).tryLock(RESOURCE_ID);
+        inOrder.verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, startAt, startAt.plusMinutes(30));
+        inOrder.verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
+        inOrder.verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "availability-lock-token");
     }
 
     @Test

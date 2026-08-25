@@ -6,6 +6,7 @@ import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.reservation.service.ReservationService;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
+import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
@@ -65,6 +66,9 @@ class ReservationNoShowListenerTest {
     private ReservationSlotLockRepository reservationSlotLockRepository;
 
     @Mock
+    private ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
+
+    @Mock
     private ReservationNoShowRepository reservationNoShowRepository;
 
     @Mock
@@ -79,8 +83,8 @@ class ReservationNoShowListenerTest {
     void setUp() {
         ReservationService reservationService = new ReservationService(
                 reservationRepository, resourceRepository, userRepository,
-                usageHistoryRepository, reservationSlotLockRepository, reservationNoShowRepository,
-                resourceRankingRedisRepository, promotionService);
+                usageHistoryRepository, reservationSlotLockRepository, resourceAvailabilityLockRepository,
+                reservationNoShowRepository, resourceRankingRedisRepository, promotionService);
         listener = new ReservationNoShowListener(new RedisMessageListenerContainer(), reservationService);
     }
 

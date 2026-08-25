@@ -6,6 +6,7 @@ import com.gymflow.domain.reservation.domain.redis.ReservationNoShowRepository;
 import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockHandle;
 import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockRepository;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
+import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.reservation.dto.request.CancelReservationRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationCreateRequest;
 import com.gymflow.domain.reservation.dto.request.ReservationExtensionRequest;
@@ -46,6 +47,7 @@ public class ReservationService {
     private final UserRepository userRepository;
     private final UsageHistoryRepository usageHistoryRepository;
     private final ReservationSlotLockRepository reservationSlotLockRepository;
+    private final ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
     private final ReservationNoShowRepository reservationNoShowRepository;
     private final ResourceRankingRedisRepository resourceRankingRedisRepository;
     private final PromotionService promotionService;
@@ -53,58 +55,65 @@ public class ReservationService {
     @Transactional
     public ReservationResponse createReservation(ReservationCreateRequest request) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
+        Long resourceId = request.resourceId();
 
-        Resource resource = resourceRepository.findWithReservationPolicyById(request.resourceId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
-
-        if (resource.getStatus() != ResourceStatus.ACTIVE) {
-            throw new BusinessException(ErrorCode.RESOURCE_NOT_ACTIVE);
-        }
-
-        ReservationPolicy policy = resource.getReservationPolicy();
-        if (policy == null) {
-            throw new BusinessException(ErrorCode.RESERVATION_POLICY_NOT_FOUND);
-        }
-
-        Integer duration = request.duration();
-        if (duration < policy.getMinDuration() || duration > policy.getMaxDuration()) {
-            throw new BusinessException(ErrorCode.INVALID_RESERVATION_DURATION);
-        }
-
-        LocalDateTime startAt = request.startAt();
-        LocalDateTime endAt = startAt.plusMinutes(duration);
-
-
-        ReservationSlotLockHandle lockHandle = reservationSlotLockRepository.tryLockAll(resource.getId(), startAt, endAt)
+        // Lock hierarchy: ResourceAvailabilityLock -> ReservationSlotLock
+        String availabilityLockToken = resourceAvailabilityLockRepository.tryLock(resourceId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
         try {
-            boolean hasConflict = reservationRepository.existsOverlapping(
-                    resource.getId(), ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
-            if (hasConflict) {
-                throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
-            }
-            if (promotionService.hasActiveOffer(resource.getId(), startAt, endAt)) {
-                throw new BusinessException(ErrorCode.RESERVATION_PROMOTION_RESERVED);
+            Resource resource = resourceRepository.findWithReservationPolicyById(resourceId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+
+            if (resource.getStatus() != ResourceStatus.ACTIVE) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_ACTIVE);
             }
 
-            User user = userRepository.getReferenceById(currentUserId);
+            ReservationPolicy policy = resource.getReservationPolicy();
+            if (policy == null) {
+                throw new BusinessException(ErrorCode.RESERVATION_POLICY_NOT_FOUND);
+            }
 
-            Reservation reservation = Reservation.builder()
-                    .reservationBatchId(UUID.randomUUID())
-                    .user(user)
-                    .resource(resource)
-                    .startAt(startAt)
-                    .endAt(endAt)
-                    .build();
+            Integer duration = request.duration();
+            if (duration < policy.getMinDuration() || duration > policy.getMaxDuration()) {
+                throw new BusinessException(ErrorCode.INVALID_RESERVATION_DURATION);
+            }
 
-            Reservation savedReservation = reservationRepository.save(reservation);
+            LocalDateTime startAt = request.startAt();
+            LocalDateTime endAt = startAt.plusMinutes(duration);
 
-            registerNoShowKey(savedReservation.getId(), startAt);
-            incrementResourceRanking(resource.getId());
+            ReservationSlotLockHandle lockHandle = reservationSlotLockRepository.tryLockAll(resource.getId(), startAt, endAt)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+            try {
+                boolean hasConflict = reservationRepository.existsOverlapping(
+                        resource.getId(), ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
+                if (hasConflict) {
+                    throw new BusinessException(ErrorCode.RESERVATION_TIME_CONFLICT);
+                }
+                if (promotionService.hasActiveOffer(resource.getId(), startAt, endAt)) {
+                    throw new BusinessException(ErrorCode.RESERVATION_PROMOTION_RESERVED);
+                }
 
-            return ReservationMapper.toResponse(savedReservation);
+                User user = userRepository.getReferenceById(currentUserId);
+
+                Reservation reservation = Reservation.builder()
+                        .reservationBatchId(UUID.randomUUID())
+                        .user(user)
+                        .resource(resource)
+                        .startAt(startAt)
+                        .endAt(endAt)
+                        .build();
+
+                Reservation savedReservation = reservationRepository.save(reservation);
+
+                registerNoShowKey(savedReservation.getId(), startAt);
+                incrementResourceRanking(resource.getId());
+
+                return ReservationMapper.toResponse(savedReservation);
+            } finally {
+                reservationSlotLockRepository.unlockAll(lockHandle);
+            }
         } finally {
-            reservationSlotLockRepository.unlockAll(lockHandle);
+            resourceAvailabilityLockRepository.unlock(resourceId, availabilityLockToken);
         }
     }
 

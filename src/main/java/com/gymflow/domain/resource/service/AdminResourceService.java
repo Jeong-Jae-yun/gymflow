@@ -5,6 +5,7 @@ import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
+import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.resource.dto.request.AdminResourceCreateRequest;
@@ -31,6 +32,7 @@ public class AdminResourceService {
     private final ResourceRepository resourceRepository;
     private final ReservationRepository reservationRepository;
     private final PromotionService promotionService;
+    private final ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
     private final ResourceCacheRepository resourceCacheRepository;
 
     @Transactional
@@ -83,10 +85,19 @@ public class AdminResourceService {
 
         ResourceStatus newStatus = request.status();
         if (resource.getStatus() != newStatus && isOccupancyBlockingStatus(newStatus)) {
-            validateNoActiveOccupancy(resourceId);
+            // ResourceAvailabilityLock은 이 경로에서 최상위이자 유일한 Lock이므로
+            // PromotionLock/ReservationSlotLock과의 획득 순서 문제가 발생하지 않는다.
+            String lockToken = resourceAvailabilityLockRepository.tryLock(resourceId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+            try {
+                validateNoActiveOccupancy(resourceId);
+                resource.changeStatus(newStatus);
+            } finally {
+                resourceAvailabilityLockRepository.unlock(resourceId, lockToken);
+            }
+        } else {
+            resource.changeStatus(newStatus);
         }
-
-        resource.changeStatus(newStatus);
 
         evictCache(resourceId);
 
