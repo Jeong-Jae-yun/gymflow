@@ -1070,4 +1070,34 @@ class PromotionServiceTest {
 
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
     }
+
+    @Test
+    @DisplayName("hasActiveOfferedPromotion은 만료되지 않은 OFFERED Promotion이 있으면 true를 반환한다")
+    void hasActiveOfferedPromotion_WithActiveOffer_ShouldReturnTrue() {
+        // given
+        LocalDateTime now = LocalDateTime.now();
+        when(promotionRepository.existsByResourceIdAndStatusAndExpiresAtAfter(RESOURCE_ID, PromotionStatus.OFFERED, now))
+                .thenReturn(true);
+
+        // when
+        boolean result = promotionService.hasActiveOfferedPromotion(RESOURCE_ID, now);
+
+        // then
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    @DisplayName("hasActiveOfferedPromotion은 활성 OFFERED Promotion이 없으면 false를 반환한다")
+    void hasActiveOfferedPromotion_WithoutActiveOffer_ShouldReturnFalse() {
+        // given
+        LocalDateTime now = LocalDateTime.now();
+        when(promotionRepository.existsByResourceIdAndStatusAndExpiresAtAfter(RESOURCE_ID, PromotionStatus.OFFERED, now))
+                .thenReturn(false);
+
+        // when
+        boolean result = promotionService.hasActiveOfferedPromotion(RESOURCE_ID, now);
+
+        // then
+        assertThat(result).isFalse();
+    }
 }

@@ -53,6 +53,13 @@ public class ReservationPolicy extends BaseEntity {
         resource.assignReservationPolicy(this);
     }
 
+    public void update(Integer slotDuration, Integer minDuration, Integer maxDuration) {
+        validateDurations(slotDuration, minDuration, maxDuration);
+        this.slotDuration = slotDuration;
+        this.minDuration = minDuration;
+        this.maxDuration = maxDuration;
+    }
+
     private static void validateResource(Resource resource) {
         if (resource == null) {
             throw new IllegalArgumentException("ReservationPolicy는 Resource 없이 생성할 수 없습니다.");

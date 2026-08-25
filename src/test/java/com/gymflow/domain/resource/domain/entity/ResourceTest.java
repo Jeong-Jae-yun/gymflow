@@ -94,4 +94,95 @@ class ResourceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("capacity");
     }
+
+    @Test
+    @DisplayName("update()는 name/capacity/description을 변경하지만 type은 그대로 유지한다")
+    void update_ShouldChangeNameCapacityDescriptionButKeepType() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .description("3F Weight Zone")
+                .build();
+
+        // when
+        resource.update("Chest Press A-2", 2, "4F Weight Zone");
+
+        // then
+        assertThat(resource.getName()).isEqualTo("Chest Press A-2");
+        assertThat(resource.getCapacity()).isEqualTo(2);
+        assertThat(resource.getDescription()).isEqualTo("4F Weight Zone");
+        assertThat(resource.getType()).isEqualTo(ResourceType.MACHINE);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, -1})
+    @DisplayName("update()는 capacity가 1 미만이면 예외가 발생하고 기존 값을 유지한다")
+    void update_WithCapacityBelowOne_ShouldThrowExceptionAndKeepOriginalValue(int invalidCapacity) {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> resource.update("Chest Press A-2", invalidCapacity, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("capacity");
+        assertThat(resource.getName()).isEqualTo("Chest Press A-1");
+        assertThat(resource.getCapacity()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @EnumSource(ResourceStatus.class)
+    @DisplayName("changeStatus()는 status를 변경한다")
+    void changeStatus_ShouldChangeStatus(ResourceStatus status) {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when
+        resource.changeStatus(status);
+
+        // then
+        assertThat(resource.getStatus()).isEqualTo(status);
+    }
+
+    @Test
+    @DisplayName("changeStatus()에 동일한 상태를 전달하면 그대로 유지되며 예외가 발생하지 않는다")
+    void changeStatus_WithSameStatus_ShouldRemainUnchanged() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when
+        resource.changeStatus(ResourceStatus.ACTIVE);
+
+        // then
+        assertThat(resource.getStatus()).isEqualTo(ResourceStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("changeStatus()에 null을 전달하면 예외가 발생한다")
+    void changeStatus_WithNull_ShouldThrowException() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> resource.changeStatus(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("status");
+    }
 }

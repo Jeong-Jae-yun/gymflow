@@ -38,4 +38,7 @@ public interface WaitingQueuePromotionRepository extends JpaRepository<WaitingQu
             @Param("startAt") LocalDateTime startAt,
             @Param("endAt") LocalDateTime endAt
     );
+
+    boolean existsByResourceIdAndStatusAndExpiresAtAfter(
+            Long resourceId, PromotionStatus status, LocalDateTime expiresAt);
 }

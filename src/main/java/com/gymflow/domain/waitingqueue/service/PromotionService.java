@@ -60,6 +60,10 @@ public class PromotionService {
         return promotionRepository.existsOverlapping(resourceId, PromotionStatus.OFFERED, startAt, endAt);
     }
 
+    public boolean hasActiveOfferedPromotion(Long resourceId, LocalDateTime now) {
+        return promotionRepository.existsByResourceIdAndStatusAndExpiresAtAfter(resourceId, PromotionStatus.OFFERED, now);
+    }
+
     @Transactional
     public void tryPromote(Long resourceId, LocalDateTime startAt, LocalDateTime endAt) {
         Resource resource = resourceRepository.findWithReservationPolicyById(resourceId).orElse(null);

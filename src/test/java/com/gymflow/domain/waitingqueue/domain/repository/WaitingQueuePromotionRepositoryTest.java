@@ -377,6 +377,61 @@ class WaitingQueuePromotionRepositoryTest {
         assertThat(exists).isFalse();
     }
 
+    @Test
+    @DisplayName("existsByResourceIdAndStatusAndExpiresAtAfter는 만료되지 않은 OFFERED Promotion에 대해 true를 반환한다")
+    void existsByResourceIdAndStatusAndExpiresAtAfter_WithActiveOffer_ShouldReturnTrue() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when: OFFERED expiresAt은 14:00, 조회 기준 now는 13:55
+        boolean exists = promotionRepository.existsByResourceIdAndStatusAndExpiresAtAfter(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.minusMinutes(5));
+
+        // then
+        assertThat(exists).isTrue();
+    }
+
+    @Test
+    @DisplayName("existsByResourceIdAndStatusAndExpiresAtAfter는 이미 만료 시각이 지난 OFFERED Promotion에 대해 false를 반환한다")
+    void existsByResourceIdAndStatusAndExpiresAtAfter_WithExpiredOffer_ShouldReturnFalse() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+
+        // when: OFFERED expiresAt은 14:00, 조회 기준 now는 14:00 이후
+        boolean exists = promotionRepository.existsByResourceIdAndStatusAndExpiresAtAfter(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.plusMinutes(5));
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @Test
+    @DisplayName("existsByResourceIdAndStatusAndExpiresAtAfter는 ACCEPTED 상태의 Promotion을 조회 대상에서 제외한다")
+    void existsByResourceIdAndStatusAndExpiresAtAfter_WithAcceptedPromotion_ShouldReturnFalse() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion promotion = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        promotion.accept(LocalDateTime.of(2026, 8, 12, 13, 59));
+        entityManager.flush();
+
+        // when
+        boolean exists = promotionRepository.existsByResourceIdAndStatusAndExpiresAtAfter(
+                resource.getId(), PromotionStatus.OFFERED, START_AT.minusMinutes(5));
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
     private Reservation persistReservation(User user, Resource resource) {
         Reservation reservation = Reservation.builder()
                 .reservationBatchId(java.util.UUID.randomUUID())

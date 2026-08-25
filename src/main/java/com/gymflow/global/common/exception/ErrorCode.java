@@ -34,7 +34,9 @@ public enum ErrorCode {
     PROMOTION_NOT_OFFERED(HttpStatus.CONFLICT, "이미 처리된 승급 기회입니다."),
     PROMOTION_EXPIRED(HttpStatus.CONFLICT, "승급 기회의 응답 시간이 만료되었습니다."),
     RESERVATION_PROMOTION_RESERVED(HttpStatus.CONFLICT, "해당 시간대는 대기열 승급 사용자에게 우선권이 부여되어 있습니다."),
-    PROMOTION_CHECKIN_EXPIRED(HttpStatus.CONFLICT, "승급 예약의 체크인 가능 시간이 만료되었습니다.");
+    PROMOTION_CHECKIN_EXPIRED(HttpStatus.CONFLICT, "승급 예약의 체크인 가능 시간이 만료되었습니다."),
+    INVALID_RESERVATION_POLICY(HttpStatus.BAD_REQUEST, "예약 정책 조합이 올바르지 않습니다."),
+    RESOURCE_STATUS_CHANGE_NOT_ALLOWED(HttpStatus.CONFLICT, "활성 예약 또는 승급 제안이 존재하여 리소스 상태를 변경할 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String message;

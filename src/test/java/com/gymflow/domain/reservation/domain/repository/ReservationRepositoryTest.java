@@ -696,6 +696,90 @@ class ReservationRepositoryTest {
         assertThat(found).isEmpty();
     }
 
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class, names = {"CONFIRMED", "CHECKED_IN"})
+    @DisplayName("existsByResourceIdAndStatusInAndEndAtAfter는 endAt이 now 이후인 CONFIRMED/CHECKED_IN 예약에 대해 true를 반환한다")
+    void existsByResourceIdAndStatusInAndEndAtAfter_WithFutureOccupyingReservation_ShouldReturnTrue(ReservationStatus status) {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+        LocalDateTime now = LocalDateTime.of(2026, 8, 12, 13, 0);
+
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(now.plusHours(1))
+                .endAt(now.plusHours(2))
+                .build();
+        if (status == ReservationStatus.CHECKED_IN) {
+            reservation.checkIn(reservation.getStartAt());
+        }
+        reservationRepository.save(reservation);
+        entityManager.flush();
+
+        // when
+        boolean exists = reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(
+                resource.getId(), ReservationStatus.OCCUPYING_STATUSES, now);
+
+        // then
+        assertThat(exists).isTrue();
+    }
+
+    @Test
+    @DisplayName("existsByResourceIdAndStatusInAndEndAtAfter는 endAt이 이미 지난 예약은 무시하고 false를 반환한다")
+    void existsByResourceIdAndStatusInAndEndAtAfter_WithStaleReservation_ShouldReturnFalse() {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+        LocalDateTime now = LocalDateTime.of(2026, 8, 12, 13, 0);
+
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(now.minusHours(2))
+                .endAt(now.minusHours(1))
+                .build();
+        reservationRepository.save(reservation);
+        entityManager.flush();
+
+        // when
+        boolean exists = reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(
+                resource.getId(), ReservationStatus.OCCUPYING_STATUSES, now);
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ReservationStatus.class, names = {"CANCELLED", "NO_SHOW", "COMPLETED"})
+    @DisplayName("existsByResourceIdAndStatusInAndEndAtAfter는 CANCELLED/NO_SHOW/COMPLETED 예약을 점유로 판단하지 않는다")
+    void existsByResourceIdAndStatusInAndEndAtAfter_WithNonOccupyingStatus_ShouldReturnFalse(ReservationStatus status) {
+        // given
+        User user = persistUser();
+        Resource resource = persistResource("Chest Press A-1");
+        LocalDateTime now = LocalDateTime.of(2026, 8, 12, 13, 0);
+
+        Reservation reservation = Reservation.builder()
+                .reservationBatchId(UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(now.plusHours(1))
+                .endAt(now.plusHours(2))
+                .build();
+        ReflectionTestUtils.setField(reservation, "status", status);
+        reservationRepository.save(reservation);
+        entityManager.flush();
+
+        // when
+        boolean exists = reservationRepository.existsByResourceIdAndStatusInAndEndAtAfter(
+                resource.getId(), ReservationStatus.OCCUPYING_STATUSES, now);
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
     private User persistUser() {
         return persistUser("batch-test@gymflow.com");
     }

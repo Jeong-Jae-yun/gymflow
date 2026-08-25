@@ -53,6 +53,20 @@ public class Resource extends BaseEntity {
         this.reservationPolicy = reservationPolicy;
     }
 
+    public void update(String name, Integer capacity, String description) {
+        validateCapacity(capacity);
+        this.name = name;
+        this.capacity = capacity;
+        this.description = description;
+    }
+
+    public void changeStatus(ResourceStatus status) {
+        if (status == null) {
+            throw new IllegalArgumentException("status는 필수입니다.");
+        }
+        this.status = status;
+    }
+
     private static void validateCapacity(Integer capacity) {
         if (capacity == null || capacity < 1) {
             throw new IllegalArgumentException("capacity는 1 이상이어야 합니다.");

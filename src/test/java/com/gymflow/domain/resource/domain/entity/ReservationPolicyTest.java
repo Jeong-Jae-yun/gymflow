@@ -144,4 +144,66 @@ class ReservationPolicyTest {
         assertThat(policy.getMinDuration()).isEqualTo(20);
         assertThat(policy.getMaxDuration()).isEqualTo(50);
     }
+
+    @Test
+    @DisplayName("update()는 slotDuration/minDuration/maxDuration을 변경한다")
+    void update_ShouldChangeDurations() {
+        // given
+        ReservationPolicy policy = ReservationPolicy.builder()
+                .resource(createResource())
+                .slotDuration(15)
+                .minDuration(15)
+                .maxDuration(60)
+                .build();
+
+        // when
+        policy.update(30, 30, 120);
+
+        // then
+        assertThat(policy.getSlotDuration()).isEqualTo(30);
+        assertThat(policy.getMinDuration()).isEqualTo(30);
+        assertThat(policy.getMaxDuration()).isEqualTo(120);
+    }
+
+    @Test
+    @DisplayName("update()에 minDuration이 maxDuration보다 큰 값을 전달하면 예외가 발생하고 기존 값을 유지한다")
+    void update_WithMinDurationGreaterThanMaxDuration_ShouldThrowExceptionAndKeepOriginalValue() {
+        // given
+        ReservationPolicy policy = ReservationPolicy.builder()
+                .resource(createResource())
+                .slotDuration(15)
+                .minDuration(15)
+                .maxDuration(60)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> policy.update(15, 60, 30))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("minDuration은 maxDuration보다 클 수 없습니다.");
+        assertThat(policy.getSlotDuration()).isEqualTo(15);
+        assertThat(policy.getMinDuration()).isEqualTo(15);
+        assertThat(policy.getMaxDuration()).isEqualTo(60);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "0, 15, 15",
+            "15, 0, 15",
+            "15, 15, 0"
+    })
+    @DisplayName("update()에 0 이하의 값을 전달하면 예외가 발생한다")
+    void update_WithNonPositiveDuration_ShouldThrowException(int slotDuration, int minDuration, int maxDuration) {
+        // given
+        ReservationPolicy policy = ReservationPolicy.builder()
+                .resource(createResource())
+                .slotDuration(15)
+                .minDuration(15)
+                .maxDuration(60)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> policy.update(slotDuration, minDuration, maxDuration))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1분 이상");
+    }
 }
