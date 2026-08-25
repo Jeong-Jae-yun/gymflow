@@ -69,14 +69,12 @@ Resource
 ### Entity
 
 ```
-MachineProfile
+ReservationPolicy
 ```
 
-MachineProfile은 Resource의 상세 정보를 관리하는 내부 Entity이다.
+ReservationPolicy는 Resource의 예약 정책(slotDuration, minDuration, maxDuration)을 관리하는 내부 Entity이다.
 
-독립적으로 존재할 수 없으며 반드시 하나의 Resource에 종속된다.
-
-Reservation은 MachineProfile을 직접 참조하지 않는다.
+독립적으로 존재할 수 없으며 반드시 하나의 Resource에 종속된다(1:1).
 
 ---
 
@@ -111,9 +109,7 @@ Resource (Aggregate Root)
 
 ├── OperatingHours (VO)
 
-├── ReservationPolicy (Entity)
-
-└── MachineProfile (Entity)
+└── ReservationPolicy (Entity)
 ```
 
 ---
@@ -252,13 +248,9 @@ WaitingQueue
 
 ### Entity
 
-```
-QueueItem
-```
+없음
 
-QueueItem은 대기열에 등록된 사용자의 정보를 관리하는 내부 Entity이다.
-
-QueueItem은 WaitingQueue 외부에서 독립적으로 존재할 수 없다.
+WaitingQueue Aggregate는 Aggregate Root 하나만으로 구성한다. 사용자의 대기 요청 자체가 WaitingQueue Entity(Aggregate Root)이며, 별도의 하위 Entity를 두지 않는다.
 
 ---
 
@@ -270,9 +262,9 @@ QueueItem은 WaitingQueue 외부에서 독립적으로 존재할 수 없다.
 
 ### Business Rules
 
-- 하나의 Resource와 TimeSlot마다 하나의 WaitingQueue가 존재한다.
+- 하나의 사용자 대기 요청마다 하나의 WaitingQueue Entity가 생성된다. 동일 Resource/시간대에 여러 사용자의 WaitingQueue가 존재할 수 있다.
 - 동일한 사용자는 같은 WaitingQueue에 중복 등록할 수 없다. 이 중복 등록 검사와 저장 사이의 동시성 경합(같은 사용자가 동일 Resource/시간대에 동시에 여러 번 요청하는 경우)은 전용 Redis Lock(`gymflow:lock:waiting-queue:{userId}:{resourceId}:{startAt}:{endAt}`, `WaitingQueueRegistrationLock`)으로 직렬화한다. 이 Lock은 `ReservationSlotLock`과 달리 Resource 시간 점유권이 아니라 "같은 사용자의 같은 등록 요청" 단위를 보호하므로, 서로 다른 사용자의 동일 시간대 대기열 등록이나 같은 사용자의 다른 시간대 등록은 서로 직렬화되지 않는다. WAITING 상태만 중복 등록 차단 대상이며, CANCELLED 이력이 있어도 동일 시간대 재등록은 허용되므로 DB UNIQUE 제약 대신 Lock + WAITING 상태 재조회 조합을 사용한다.
-- QueueItem은 등록 순서를 유지한다.
+- 대기 순서는 Redis Sorted Set(ZSET)을 통해 관리한다.
 - CONFIRMED → NO_SHOW 또는 CONFIRMED → CANCELLED로 빈 슬롯이 발생하면 가장 앞의 WaitingQueue가 승급(PROMOTED) 대상이 된다.
 - WaitingQueue의 PROMOTED는 "예약 우선 기회를 받음"을 의미할 뿐 예약 생성 완료를 의미하지 않는다. 실제 수락/거절/응답 timeout은 별도의 WaitingQueuePromotion Aggregate가 관리한다.
 
@@ -283,9 +275,11 @@ QueueItem은 WaitingQueue 외부에서 독립적으로 존재할 수 없다.
 ```
 WaitingQueue (Aggregate Root)
 
-│
-
-└── QueueItem (Entity)
+├── user        (참조 — User Aggregate Root)
+├── resource    (참조 — Resource Aggregate Root)
+├── startAt
+├── endAt
+└── status
 ```
 
 ---
@@ -431,18 +425,6 @@ Reservation은 User와 Resource를 각각 Aggregate Root 단위로만 참조하�
 ---
 
 ### Not Allowed
-
-```
-Reservation
-
-↓
-
-MachineProfile
-```
-
-Reservation은 MachineProfile을 직접 참조하지 않는다.
-
----
 
 ```
 Reservation
@@ -669,6 +651,8 @@ ReservationRepository
 
 WaitingQueueRepository
 
+WaitingQueuePromotionRepository
+
 FavoriteRepository
 
 UsageHistoryRepository
@@ -676,9 +660,9 @@ UsageHistoryRepository
 UserRepository
 ```
 
-MachineProfileRepository와 QueueItemRepository는 생성하지 않는다.
+ReservationPolicyRepository는 별도로 생성하지 않는다.
 
-두 Entity는 Aggregate 내부에서만 관리된다.
+ReservationPolicy는 Resource Aggregate 내부 Entity이므로 Resource를 통해서만 저장/조회된다.
 
 Repository는 다음 책임만 가진다.
 
@@ -808,26 +792,6 @@ SHOWER_ROOM
 
 02-1 Domain Modeling 문서 1.1에서 예약 가능한 대상으로 제시한
 Sauna와 Shower Room을 ResourceType에 포함한다.
-
----
-
-### MachineType
-
-```
-CHEST
-
-BACK
-
-LEG
-
-SHOULDER
-
-CARDIO
-
-ARM
-
-CORE
-```
 
 ---
 
