@@ -2,12 +2,12 @@
 
 # Document Information
 
-| 항목 | 내용 |
-|------|------|
+| 항목 | 내용              |
+|------|-----------------|
 | Document | Domain Modeling |
-| Version | v1.0 |
-| Author | 정재윤 |
-| Last Updated | 2026-08-04 |
+| Version | v1.0            |
+| Author | 정재윤             |
+| Last Updated | 2026-08-25      |
 
 ---
 
@@ -32,7 +32,7 @@ GymFlow에서는 예약 가능한 모든 대상을 **Resource**라는 하나의 
 - Shower Room
 
 예약 시스템은 Resource라는 추상 개념만 이해하며,
-각 Resource의 세부 정보는 별도의 Profile이 관리한다.
+Resource 타입별 구분은 ResourceType Enum으로, 예약 정책은 ReservationPolicy Entity로 관리한다.
 
 ---
 
@@ -169,6 +169,9 @@ Reservation은 다음 정보를 가진다.
 
 reservation_batch_id는 현재 단순 그룹 식별자로 사용하며,
 향후 ReservationGroup Aggregate로 확장 가능하다.
+
+여러 Reservation이 하나의 reservation_batch_id를 공유해야 하므로,
+reservation_batch_id에는 UNIQUE 제약을 두지 않는다.
 ---
 
 ## 3.3 상태(State) 중심 모델링
@@ -177,20 +180,7 @@ GymFlow에서는 Resource 상태와 Reservation 상태를 분리하여 관리한
 
 Resource 상태:
 
-AVAILABLE
-
-↓
-
-IN_USE
-
-↓
-
-AVAILABLE
-
-
-또는
-
-AVAILABLE
+ACTIVE
 
 ↓
 
@@ -198,14 +188,27 @@ MAINTENANCE
 
 ↓
 
-AVAILABLE
+ACTIVE
+
+
+또는
+
+ACTIVE
+
+↓
+
+INACTIVE
+
+
+Resource 상태는 운영 상태만 표현한다.
+
+특정 시간대의 점유 여부는 Resource 상태가 아니라
+Reservation이 판단한다.
 
 
 Reservation 상태:
 
-PENDING
-
-↓
+정상 흐름
 
 CONFIRMED
 
@@ -218,13 +221,26 @@ CHECKED_IN
 COMPLETED
 
 
+예외 흐름
+
+CONFIRMED
+
+↓
+
+CANCELLED
+
 또는
 
 CONFIRMED
 
 ↓
 
-CANCELED
+NO_SHOW
+
+
+NO_SHOW는 체크인 허용 시간(startAt - 5분 ~ startAt) 내에 체크인하지 않고 startAt이 지난 경우의 상태이다.
+
+COMPLETED는 체크인 후 정상적으로 체크아웃을 완료한 경우의 상태이다.
 
 ---
 
@@ -252,19 +268,17 @@ CANCELED
 |-------------------|-------------------------------|
 | Resource          | 예약 가능한 모든 대상                  |
 | Machine           | 운동기구 Resource                 |
-| Resource Profile  | Resource의 상세 정보               |
 | Reservation       | Resource 예약                   |
 | Reservation Slot  | Reservation이 점유한 특정 Time Slot |
 | Waiting Queue     | 예약 대기열                        |
+| Waiting Queue Promotion | 대기열 사용자에게 제공되는 예약 우선 기회(OFFERED) |
 | Check In          | 예약 시작 확인                      |
 | Check Out         | 이용 종료                         |
 | Favorite          | 즐겨찾기                          |
 | Usage History     | 이용 기록                         |
 | Maintenance       | 점검 상태                         |
 | Availability      | 예약 가능 여부                      |
-| Queue Item        | 대기열 사용자                       |
 | Time Slot         | Resource 예약 가능한 최소 시간 단위      |
-| Profile           | Resource의 상세 정보               |
 | Domain Event      | 도메인 상태 변경 이벤트                 |
 | Reservation Batch | 하나의 예약 요청으로 생성된 Reservation 그룹 식별자  |
 
@@ -348,7 +362,7 @@ GymFlow는 비즈니스 책임을 기준으로 다음과 같은 Bounded Context�
 ### 포함
 
 - Resource (Aggregate Root)
-- MachineProfile (Entity)
+- ReservationPolicy (Entity)
 - OperatingHours (Value Object)
 - Location (Value Object)
 
@@ -368,7 +382,9 @@ GymFlow는 비즈니스 책임을 기준으로 다음과 같은 Bounded Context�
 ### 포함
 
 - Reservation (Aggregate Root)
-- TimeSlot (Value Object)
+
+현재 구현에서는 예약 시작 시간과 종료 시간을 TimeSlot Value Object로 감싸지 않고
+Reservation의 startAt / endAt 필드로 직접 관리한다.
 
 ---
 
@@ -384,7 +400,12 @@ GymFlow는 비즈니스 책임을 기준으로 다음과 같은 Bounded Context�
 ### 포함
 
 - WaitingQueue (Aggregate Root)
-- QueueItem (Entity)
+- WaitingQueuePromotion (Aggregate Root, 별도)
+
+WaitingQueue는 QueueItem 없이 사용자별 대기 요청 자체를 Aggregate Root로 저장한다.
+
+예약 승급은 WaitingQueue가 직접 수행하지 않고, 별도의 WaitingQueuePromotion Aggregate가
+OFFERED 상태를 생성하여 사용자에게 예약 기회를 제공하는 방식으로 이루어진다.
 
 ---
 
@@ -468,23 +489,24 @@ Notification
                                       │
                                       ▼
                                   Resource
-                                 ╱        ╲
-                                ▼          ▼
-                  ReservationPolicy   MachineProfile
+                                      │
+                                      ▼
+                              ReservationPolicy
 
 WaitingQueue
      │
      ▼
- QueueItem
+WaitingQueuePromotion
 
 UsageHistory
 ```
 
 ### Aggregate 관계
 
-- Reservation은 Resource를 참조하지만 MachineProfile은 직접 참조하지 않는다.
-- MachineProfile은 Resource Aggregate 내부 Entity이다.
+- Reservation은 Resource를 참조하며, Resource 하위에 별도의 Profile Entity를 두지 않는다.
+- ReservationPolicy는 Resource Aggregate 내부 Entity이다.
 - WaitingQueue는 Reservation과 독립적으로 관리되는 Aggregate이다.
+- WaitingQueue가 승급되면 WaitingQueuePromotion(OFFERED)이 생성되어 사용자에게 예약 기회를 제공하며, 사용자가 수락(ACCEPTED)해야 비로소 Reservation이 생성된다.
 - UsageHistory는 Reservation 완료 이벤트를 통해 생성된다.
 - Favorite는 User와 Resource를 연결하지만 예약과는 독립적으로 동작한다.
 
@@ -495,7 +517,7 @@ UsageHistory
 Resource는 GymFlow에서 예약 가능한 모든 대상을 의미하는 Aggregate Root이다.
 
 예약 시스템은 Resource만을 대상으로 동작하며,
-각 Resource의 상세 정보는 Profile Entity가 관리한다.
+Resource 타입별 세부 구분은 ResourceType Enum으로, 예약 정책은 ReservationPolicy Entity로 관리한다.
 
 ```
                 Resource (Aggregate Root)
@@ -518,15 +540,13 @@ operatingHours
             1 : 1
 ──────────────────────────────────────
 
-MachineProfile (Entity)
+ReservationPolicy (Entity)
 
-manufacturer
+slotDuration
 
-machineType
+minDuration
 
-serialNumber
-
-description
+maxDuration
 ```
 
 ### Resource의 책임
@@ -536,70 +556,35 @@ description
 - 운영시간 관리
 - 위치 관리
 
-### MachineProfile의 책임
+### ReservationPolicy의 책임
 
-- 운동기구의 상세 정보 관리
-- 제조사 정보
-- 운동기구 종류
-- 모델 정보
-- 설명
+- Resource별 예약 슬롯 단위(slotDuration) 관리
+- 최소/최대 이용 시간(minDuration/maxDuration) 관리
 
-MachineProfile은 독립적인 예약 대상이 아니며,
-반드시 하나의 Resource에 종속된다.
+ReservationPolicy는 독립적인 예약 대상이 아니며,
+반드시 하나의 Resource에 종속된다(1:1).
 
-Reservation은 MachineProfile을 직접 참조하지 않고
+Reservation은 Resource 하위에 별도의 Profile Entity를 두지 않고
 항상 Resource만 참조한다.
 
 이를 통해 새로운 Resource 타입이 추가되어도
 예약 로직은 변경되지 않는다.
 
-향후에는 동일한 구조로 다음 Profile을 추가할 수 있다.
-
-- MachineProfile
-- PTRoomProfile
-- LockerProfile
-- StretchZoneProfile
-- SaunaProfile
-
 ---
 
 # 12. Future Expansion
 
-현재
+새로운 Resource 타입은 별도의 Profile Entity를 추가하는 방식이 아니라,
+ResourceType Enum에 값을 추가하는 방식으로 확장한다.
 
 Resource
 
 ↓
 
-MachineProfile
+ResourceType (MACHINE, PT_ROOM, LOCKER, STRETCH_ZONE, SAUNA, SHOWER_ROOM)
 
-향후
-
-Resource
-
-↓
-
-MachineProfile
-
-↓
-
-PTProfile
-
-↓
-
-LockerProfile
-
-↓
-
-StretchZoneProfile
-
-↓
-
-SaunaProfile
-
-예약 시스템은 변경되지 않는다.
-
-Profile만 추가된다.
+예약 시스템은 ResourceType의 구체적인 값을 알지 못하고 Resource만 참조하므로,
+새로운 ResourceType이 추가되어도 예약 로직은 변경되지 않는다.
 
 ---
 
@@ -611,7 +596,7 @@ GymFlow는 다음 원칙을 따른다.
 - 예약과 Resource의 책임 분리
 - 상태 기반 모델링
 - Event 기반 실시간 처리
-- 확장 가능한 Profile 구조
+- 확장 가능한 ResourceType 구조
 - 새로운 Resource 추가 시 예약 로직 변경 최소화
 - Aggregate는 다른 Aggregate의 내부 상태를 직접 변경하지 않는다. 
 - Aggregate 간 협력은 Domain Event 또는 Application Service를 통해 수행한다.

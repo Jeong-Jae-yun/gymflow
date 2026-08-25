@@ -69,14 +69,12 @@ Resource
 ### Entity
 
 ```
-MachineProfile
+ReservationPolicy
 ```
 
-MachineProfile은 Resource의 상세 정보를 관리하는 내부 Entity이다.
+ReservationPolicy는 Resource의 예약 정책(slotDuration, minDuration, maxDuration)을 관리하는 내부 Entity이다.
 
-독립적으로 존재할 수 없으며 반드시 하나의 Resource에 종속된다.
-
-Reservation은 MachineProfile을 직접 참조하지 않는다.
+독립적으로 존재할 수 없으며 반드시 하나의 Resource에 종속된다(1:1).
 
 ---
 
@@ -111,9 +109,7 @@ Resource (Aggregate Root)
 
 ├── OperatingHours (VO)
 
-├── ReservationPolicy (Entity)
-
-└── MachineProfile (Entity)
+└── ReservationPolicy (Entity)
 ```
 
 ---
@@ -146,23 +142,27 @@ Reservation Aggregate는 Aggregate Root 하나만으로 구성한다.
 
 ### Value Object
 
-```
-TimeSlot
-```
+없음 (현재 미사용)
 
-예약 시간은 TimeSlot Value Object로 관리한다.
+현재 구현에서는 예약 시작 시간과 종료 시간을 TimeSlot Value Object로 감싸지 않고,
+Reservation Aggregate Root의 startAt / endAt 필드로 직접 관리한다.
 
-예약 시작 시간과 종료 시간은 항상 함께 변경되므로 하나의 값 객체로 표현한다.
+비고: 향후 예약 연장, 슬롯 단위 검증 등 시간 관련 도메인 규칙이 복잡해지면
+TimeSlot Value Object로 리팩터링할 수 있다.
 
 ---
 
 ### Business Rules
 
-- 동일한 Resource는 동일한 시간에 하나의 예약만 가능하다.
+- 동일한 Resource는 동일한 시간에 점유 상태(CONFIRMED, CHECKED_IN)의 예약이 하나만 존재할 수 있다.
+- Resource의 예약 시간 충돌은 CONFIRMED 및 CHECKED_IN 상태의 Reservation을 모두 점유 상태로 간주하여 판단한다. CANCELLED, NO_SHOW, COMPLETED 상태의 Reservation은 충돌 검사 대상에서 제외된다.
+- 시간 구간이 정확히 맞닿는 예약(예: 14:00~14:15와 14:15~14:30)은 충돌로 보지 않는다.
+- `PromotionStatus.OFFERED`는 해당 Resource/시간 구간에 대한 임시 예약 우선권으로 취급한다. 일반 예약 생성 및 연장은 동일 Resource의 Active OFFERED Promotion과 시간 구간이 겹칠 경우 허용하지 않으며(`RESERVATION_PROMOTION_RESERVED`), 판단 기준은 Reservation 충돌 조건과 동일하게 `existing.startAt < requestedEndAt && existing.endAt > requestedStartAt`을 사용한다(`endAt == requestedStartAt`인 인접 시간대는 허용). `WaitingQueuePromotionRepository.existsOverlapping()`이 이 조회를 담당하며, `ACCEPTED`/`REJECTED`/`EXPIRED`로 전이된 Promotion은 더 이상 임시 우선권으로 간주하지 않는다. 예약 연장은 새로 점유하는 구간(`oldEndAt ~ newEndAt`)만을 기준으로 이 overlap을 재검증한다.
+- Resource 시간 점유권을 획득/확장하는 모든 작업(예약 생성, 예약 연장, Promotion ACCEPT, Promotion OFFERED 생성)은 공통 `ReservationSlotLock` 경계를 공유한다. 요청 구간 `[startAt, endAt)`을 절대 5분 grid 슬롯(`gymflow:lock:reservation-slot:{resourceId}:{slotStart}`)들로 분해해 슬롯별로 Lock을 모두 획득해야 하며, 겹치는 두 시간 구간은 항상 최소 하나의 슬롯을 공유하도록 보장된다. 이전에는 `{resourceId}:{startAt}:{endAt}`을 그대로 Lock Key로 사용했으나, 이는 정확히 같은 시작/종료 시각의 요청만 직렬화할 뿐 겹치기만 하는 서로 다른 요청은 직렬화하지 못하는 한계(write-skew)가 있어 이 방식으로 대체되었다. 예약 연장은 새로 점유하는 구간(`oldEndAt ~ newEndAt`)만 Lock하며, 이미 점유 중인 `startAt ~ oldEndAt` 구간은 커밋된 상태에 대한 overlap 재검증만으로 충분히 보호된다.
 - 예약 생성 시 Resource는 예약 가능 상태여야 한다.
 - 예약 시간은 운영시간 내에 존재해야 한다.
-- 체크인 가능 시간이 지나면 예약은 자동 취소된다.
-- 체크아웃 이후 예약은 Completed 상태가 된다.
+- 체크인은 예약 시작 시각(startAt) 5분 전부터 startAt까지만 가능하다. startAt까지 체크인하지 않으면 예약은 NO_SHOW 처리된다.
+- 체크아웃 이후 예약은 COMPLETED 상태가 된다.
 - 예약 완료 후 UsageHistory 생성 이벤트를 발행한다.
 - 예약 연장은 다음 예약이 존재하지 않을 경우에만 가능하다.
 
@@ -198,8 +198,12 @@ CONFIRMED
 
 ↓
 
-EXPIRED
+NO_SHOW
 ```
+
+NO_SHOW는 체크인 허용 시간(startAt - 5분 ~ startAt) 내에 체크인하지 않고 startAt이 지난 경우의 상태이다.
+
+COMPLETED는 체크인 후 정상적으로 체크아웃을 완료한 경우의 상태이다.
 
 ---
 
@@ -208,10 +212,20 @@ EXPIRED
 ```
 Reservation (Aggregate Root)
 
-│
-
-└── TimeSlot (VO)
+├── id
+├── reservationBatchId
+├── user        (참조 — User Aggregate Root)
+├── resource    (참조 — Resource Aggregate Root)
+├── startAt
+├── endAt
+└── status
 ```
+
+Reservation은 user와 resource 필드를 통해 User Aggregate와 Resource Aggregate를 참조하지만,
+User와 Resource는 각각 독립적인 Aggregate Root이며 Reservation Aggregate에 속한 내부 Entity가 아니다.
+
+reservationBatchId는 UUID이며, 하나의 예약 요청으로 생성된 여러 Reservation이
+동일한 값을 공유할 수 있도록 UNIQUE 제약을 두지 않는다.
 
 ---
 ## 5. WaitingQueue Aggregate
@@ -234,13 +248,9 @@ WaitingQueue
 
 ### Entity
 
-```
-QueueItem
-```
+없음
 
-QueueItem은 대기열에 등록된 사용자의 정보를 관리하는 내부 Entity이다.
-
-QueueItem은 WaitingQueue 외부에서 독립적으로 존재할 수 없다.
+WaitingQueue Aggregate는 Aggregate Root 하나만으로 구성한다. 사용자의 대기 요청 자체가 WaitingQueue Entity(Aggregate Root)이며, 별도의 하위 Entity를 두지 않는다.
 
 ---
 
@@ -252,11 +262,11 @@ QueueItem은 WaitingQueue 외부에서 독립적으로 존재할 수 없다.
 
 ### Business Rules
 
-- 하나의 Resource와 TimeSlot마다 하나의 WaitingQueue가 존재한다.
-- 동일한 사용자는 같은 WaitingQueue에 중복 등록할 수 없다.
-- QueueItem은 등록 순서를 유지한다.
-- 예약 취소 또는 만료 시 가장 앞의 QueueItem이 승급 대상이 된다.
-- 승급 대상이 예약을 수락하지 않으면 다음 QueueItem으로 넘어간다.
+- 하나의 사용자 대기 요청마다 하나의 WaitingQueue Entity가 생성된다. 동일 Resource/시간대에 여러 사용자의 WaitingQueue가 존재할 수 있다.
+- 동일한 사용자는 같은 WaitingQueue에 중복 등록할 수 없다. 이 중복 등록 검사와 저장 사이의 동시성 경합(같은 사용자가 동일 Resource/시간대에 동시에 여러 번 요청하는 경우)은 전용 Redis Lock(`gymflow:lock:waiting-queue:{userId}:{resourceId}:{startAt}:{endAt}`, `WaitingQueueRegistrationLock`)으로 직렬화한다. 이 Lock은 `ReservationSlotLock`과 달리 Resource 시간 점유권이 아니라 "같은 사용자의 같은 등록 요청" 단위를 보호하므로, 서로 다른 사용자의 동일 시간대 대기열 등록이나 같은 사용자의 다른 시간대 등록은 서로 직렬화되지 않는다. WAITING 상태만 중복 등록 차단 대상이며, CANCELLED 이력이 있어도 동일 시간대 재등록은 허용되므로 DB UNIQUE 제약 대신 Lock + WAITING 상태 재조회 조합을 사용한다.
+- 대기 순서는 Redis Sorted Set(ZSET)을 통해 관리한다.
+- CONFIRMED → NO_SHOW 또는 CONFIRMED → CANCELLED로 빈 슬롯이 발생하면 가장 앞의 WaitingQueue가 승급(PROMOTED) 대상이 된다.
+- WaitingQueue의 PROMOTED는 "예약 우선 기회를 받음"을 의미할 뿐 예약 생성 완료를 의미하지 않는다. 실제 수락/거절/응답 timeout은 별도의 WaitingQueuePromotion Aggregate가 관리한다.
 
 ---
 
@@ -265,10 +275,28 @@ QueueItem은 WaitingQueue 외부에서 독립적으로 존재할 수 없다.
 ```
 WaitingQueue (Aggregate Root)
 
-│
-
-└── QueueItem (Entity)
+├── user        (참조 — User Aggregate Root)
+├── resource    (참조 — Resource Aggregate Root)
+├── startAt
+├── endAt
+└── status
 ```
+
+---
+
+### WaitingQueuePromotion (별도 Aggregate)
+
+WaitingQueue의 승급 기회(OFFERED)를 수락(ACCEPTED)/거절(REJECTED)/응답 시간 만료(EXPIRED)로 관리하는 별도 Aggregate Root이다.
+
+- OFFERED 상태에만 Redis TTL(기본 최대 2분, `endAt - now - ReservationPolicy.minDuration`으로 상한을 재계산)이 걸리며, TTL 만료 시 EXPIRED로 전이되고 다음 대기자에게 자동으로 재승급을 시도한다.
+- ACCEPTED 시 신규 Reservation(CONFIRMED)이 생성되고 WaitingQueuePromotion과 1:1로 연결되며(`reservation_id`), 별도의 1분 Redis Check-In TTL이 부여된다. 그 안에 체크인하지 않으면 Reservation은 CANCELLED + `PROMOTION_CHECKIN_TIMEOUT` 사유로 취소되고 다음 대기자 승급이 다시 시도된다.
+- Promotion으로 생성된 Reservation의 체크인 가능 시간은 일반 예약(`startAt - 5분 ~ startAt`)과 다르다. Promotion ACCEPT는 startAt이 이미 지난 뒤에도 발생할 수 있으므로, 체크인 가능 시간은 **Promotion ACCEPT 시각(`acceptedAt`)부터 1분**으로 별도 계산한다(`Reservation.checkInByPromotion(now, deadline)`). ReservationService는 체크인 대상 Reservation이 ACCEPTED 상태의 WaitingQueuePromotion과 연결되어 있는지(`WaitingQueuePromotionRepository.findByReservationId`)로 두 정책을 구분하며, 일반 checkIn()의 시간창은 이 경우에도 변경되지 않는다.
+- 동일 Resource에서 시간 구간이 겹치는 Active OFFERED Promotion은 동시에 존재할 수 없다. `tryPromote()`는 새 OFFERED를 생성하기 전 `WaitingQueuePromotionRepository.existsOverlapping()`으로 동일 Resource의 겹치는 Active OFFERED 존재 여부를 재검증하며(정확히 같은 시작/종료 시각이 아니어도 겹치기만 하면 차단), `ACCEPTED`/`REJECTED`/`EXPIRED` 상태의 Promotion은 이 검사 대상에서 제외된다. Promotion ACCEPT는 자기 자신의 OFFERED를 Reservation으로 전환하는 과정이므로 이 overlap 검사를 별도로 수행하지 않는다(자기 자신 때문에 차단되지 않음).
+- 동일 Resource + 시간 구간에 동시에 여러 OFFERED가 생성되지 않도록 전용 Redis Lock(`gymflow:lock:promotion:{resourceId}:{startAt}:{endAt}`, `PromotionLock`)으로 직렬화한다. 이 Lock은 Promotion 체크인과 Check-In TTL 만료 처리 사이의 경쟁도 동일하게 직렬화한다. `PromotionLock`은 Promotion 상태 전이(OFFERED/ACCEPTED/REJECTED/EXPIRED)만 보호하는 책임이며, Resource 시간 점유권 자체는 보호하지 않는다.
+- Promotion ACCEPT(신규 Reservation 생성)와 자동 OFFERED 생성은 Resource 시간 점유권을 변경하는 작업이므로, 일반 예약 생성/연장과 동일한 `ReservationSlotLock` 경계도 함께 사용한다. 두 Lock을 모두 사용하는 경로(ACCEPT, 자동 승급)는 항상 `PromotionLock`을 먼저 획득한 뒤 `ReservationSlotLock`을 획득하는 순서로 고정되어 있으며(해제는 역순), 프로젝트 전체에서 이 순서가 뒤바뀌는 경로는 없다(Deadlock 방지). 이렇게 겹치는 시간대의 일반 예약 생성과 Promotion OFFERED 생성/ACCEPT가 동시에 발생해도 `ReservationSlotLock`의 슬롯 경합으로 인해 둘 중 하나만 성립한다.
+- Promotion 체크인이 성공하면 Check-In TTL Key를 즉시 삭제해 불필요한 만료 이벤트가 발생하지 않도록 한다(Redis 삭제 실패는 fail-open으로 처리하고 MySQL CHECKED_IN 상태는 그대로 유지한다).
+- deadline을 넘긴 체크인 요청은 서버 오류가 아니라 `PROMOTION_CHECKIN_EXPIRED`(409 Conflict) Business Error로 응답한다. Service가 deadline을 먼저 검증해 API 레벨의 의미 있는 오류를 반환하고, `Reservation.checkInByPromotion()`의 동일한 시간 검증은 최종 방어선으로 유지한다.
+- MySQL이 Source of Truth이며 Redis는 순번(ZSET)·TTL·Lock·Pub/Sub 등 보조 수단으로만 사용한다.
 
 ---
 
@@ -375,11 +403,10 @@ Aggregate는 서로의 내부 상태를 직접 변경하지 않는다.
 
 ```
 Reservation
-
-resourceId
         │
-        ▼
-Resource Aggregate
+        ├──▶ User Aggregate
+        │
+        └──▶ Resource Aggregate
 
 Favorite
         │
@@ -392,21 +419,12 @@ Favorite
       User
 ```
 
+Reservation은 User와 Resource를 각각 Aggregate Root 단위로만 참조하며,
+두 Aggregate의 내부 상태를 직접 변경하지 않는다.
+
 ---
 
 ### Not Allowed
-
-```
-Reservation
-
-↓
-
-MachineProfile
-```
-
-Reservation은 MachineProfile을 직접 참조하지 않는다.
-
----
 
 ```
 Reservation
@@ -633,6 +651,8 @@ ReservationRepository
 
 WaitingQueueRepository
 
+WaitingQueuePromotionRepository
+
 FavoriteRepository
 
 UsageHistoryRepository
@@ -640,9 +660,9 @@ UsageHistoryRepository
 UserRepository
 ```
 
-MachineProfileRepository와 QueueItemRepository는 생성하지 않는다.
+ReservationPolicyRepository는 별도로 생성하지 않는다.
 
-두 Entity는 Aggregate 내부에서만 관리된다.
+ReservationPolicy는 Resource Aggregate 내부 Entity이므로 Resource를 통해서만 저장/조회된다.
 
 Repository는 다음 책임만 가진다.
 
@@ -667,6 +687,9 @@ endTime
 ```
 
 예약 시간 표현
+
+비고: 현재 Reservation Aggregate는 TimeSlot을 사용하지 않고
+startAt / endAt 필드로 직접 시간을 관리한다.
 
 ---
 
@@ -715,14 +738,23 @@ Value Object는 식별자를 가지지 않으며 불변 객체로 설계한다.
 ### ResourceStatus
 
 ```
-AVAILABLE
+ACTIVE
 
-IN_USE
+INACTIVE
 
 MAINTENANCE
-
-DISABLED
 ```
+
+ResourceStatus는 Resource 자체의 운영 상태만 표현한다.
+
+`IN_USE`(실시간 점유 여부)는 Resource의 운영 상태가 아니라
+특정 Time Slot의 예약 점유 결과이므로 Reservation Aggregate에서 판단한다.
+
+따라서 Resource는 다음 세 가지 운영 상태만 가진다.
+
+- ACTIVE : 예약 가능한 정상 운영 상태
+- INACTIVE : 운영하지 않는 상태 (예약 대상 아님)
+- MAINTENANCE : 점검 중인 상태 (예약 대상 아님)
 
 ---
 
@@ -737,7 +769,7 @@ COMPLETED
 
 CANCELLED
 
-EXPIRED
+NO_SHOW
 ```
 
 ---
@@ -752,27 +784,14 @@ PT_ROOM
 LOCKER
 
 STRETCH_ZONE
+
+SAUNA
+
+SHOWER_ROOM
 ```
 
----
-
-### MachineType
-
-```
-CHEST
-
-BACK
-
-LEG
-
-SHOULDER
-
-CARDIO
-
-ARM
-
-CORE
-```
+02-1 Domain Modeling 문서 1.1에서 예약 가능한 대상으로 제시한
+Sauna와 Shower Room을 ResourceType에 포함한다.
 
 ---
 
@@ -791,7 +810,3 @@ ADMIN
 Enum의 순서 변경에 따른 문제를 방지하고 가독성을 높이기 위함이다.
 
 ---
-
-# Next Document
-
-➡️ **02-3_ERD_Design.md**
