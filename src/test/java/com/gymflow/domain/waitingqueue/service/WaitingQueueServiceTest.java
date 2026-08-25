@@ -11,8 +11,6 @@ import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
-import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueEventPublisher;
-import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueuePromotedEvent;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRegistrationLockRepository;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueueRepository;
@@ -75,9 +73,6 @@ class WaitingQueueServiceTest {
 
     @Mock
     private WaitingQueueRedisRepository waitingQueueRedisRepository;
-
-    @Mock
-    private WaitingQueueEventPublisher waitingQueueEventPublisher;
 
     @Mock
     private WaitingQueueRegistrationLockRepository waitingQueueRegistrationLockRepository;
@@ -512,87 +507,5 @@ class WaitingQueueServiceTest {
         assertThat(captor.getValue().getStartAt()).isEqualTo(START_AT);
         assertThat(captor.getValue().getEndAt()).isEqualTo(END_AT);
         assertThat(captor.getValue().getStatus()).isEqualTo(WaitingQueueStatus.WAITING);
-    }
-
-    @Test
-    @DisplayName("WAITING 상태의 대기열은 정상적으로 승급되고 승급 이벤트가 발행된다")
-    void promoteWaitingQueue_WithWaitingStatus_ShouldSucceedAndPublishEvent() {
-        // given
-        Resource resource = activeResource();
-        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
-        when(waitingQueueRepository.findById(100L)).thenReturn(Optional.of(waitingQueue));
-
-        // when
-        waitingQueueService.promoteWaitingQueue(100L);
-
-        // then
-        assertThat(waitingQueue.getStatus()).isEqualTo(WaitingQueueStatus.PROMOTED);
-        verify(waitingQueueEventPublisher).publish(any(WaitingQueuePromotedEvent.class));
-    }
-
-    @Test
-    @DisplayName("존재하지 않는 대기열을 승급하려 하면 예외가 발생하고 이벤트는 발행되지 않는다")
-    void promoteWaitingQueue_WithNonExistentWaitingQueue_ShouldThrowExceptionAndNotPublish() {
-        // given
-        when(waitingQueueRepository.findById(999L)).thenReturn(Optional.empty());
-
-        // when & then
-        assertThatThrownBy(() -> waitingQueueService.promoteWaitingQueue(999L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_NOT_FOUND);
-
-        verify(waitingQueueEventPublisher, never()).publish(any());
-    }
-
-    @Test
-    @DisplayName("이미 PROMOTED 상태인 대기열은 다시 승급할 수 없고 이벤트는 발행되지 않는다")
-    void promoteWaitingQueue_WithAlreadyPromotedStatus_ShouldThrowExceptionAndNotPublish() {
-        // given
-        Resource resource = activeResource();
-        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
-        waitingQueue.promote();
-        when(waitingQueueRepository.findById(100L)).thenReturn(Optional.of(waitingQueue));
-
-        // when & then
-        assertThatThrownBy(() -> waitingQueueService.promoteWaitingQueue(100L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_NOT_PROMOTABLE);
-
-        verify(waitingQueueEventPublisher, never()).publish(any());
-    }
-
-    @Test
-    @DisplayName("CANCELLED 상태인 대기열은 승급할 수 없고 이벤트는 발행되지 않는다")
-    void promoteWaitingQueue_WithCancelledStatus_ShouldThrowExceptionAndNotPublish() {
-        // given
-        Resource resource = activeResource();
-        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
-        waitingQueue.cancel();
-        when(waitingQueueRepository.findById(100L)).thenReturn(Optional.of(waitingQueue));
-
-        // when & then
-        assertThatThrownBy(() -> waitingQueueService.promoteWaitingQueue(100L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_NOT_PROMOTABLE);
-
-        verify(waitingQueueEventPublisher, never()).publish(any());
-    }
-
-    @Test
-    @DisplayName("Redis 이벤트 발행이 실패해도 WaitingQueue 상태 변경 자체는 유지된다")
-    void promoteWaitingQueue_WithEventPublishFailure_ShouldStillPersistStatusChange() {
-        // given
-        Resource resource = activeResource();
-        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
-        when(waitingQueueRepository.findById(100L)).thenReturn(Optional.of(waitingQueue));
-        doThrow(new RuntimeException("Redis publish 실패"))
-                .when(waitingQueueEventPublisher).publish(any(WaitingQueuePromotedEvent.class));
-
-        // when
-        waitingQueueService.promoteWaitingQueue(100L);
-
-        // then
-        assertThat(waitingQueue.getStatus()).isEqualTo(WaitingQueueStatus.PROMOTED);
-        verify(waitingQueueEventPublisher).publish(any(WaitingQueuePromotedEvent.class));
     }
 }

@@ -30,7 +30,6 @@ public enum ErrorCode {
     WAITING_QUEUE_NOT_AVAILABLE(HttpStatus.CONFLICT, "이미 예약 가능한 시간대이므로 대기열에 등록할 수 없습니다."),
     WAITING_QUEUE_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 대기열입니다."),
     WAITING_QUEUE_NOT_CANCELLABLE(HttpStatus.CONFLICT, "취소할 수 없는 대기열 상태입니다."),
-    WAITING_QUEUE_NOT_PROMOTABLE(HttpStatus.CONFLICT, "승급할 수 없는 대기열 상태입니다."),
     PROMOTION_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 승급 기회입니다."),
     PROMOTION_NOT_OFFERED(HttpStatus.CONFLICT, "이미 처리된 승급 기회입니다."),
     PROMOTION_EXPIRED(HttpStatus.CONFLICT, "승급 기회의 응답 시간이 만료되었습니다."),
