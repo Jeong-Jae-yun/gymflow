@@ -11,7 +11,7 @@
 | Document | Project Overview |
 | Version | v1.0             |
 | Author | 정재윤              |
-| Last Updated | 2026-08-24       |
+| Last Updated | 2026-08-26       |
 ---
 
 # 1. 프로젝트 소개
@@ -117,9 +117,9 @@ Redis TTL을 이용하여 별도의 Polling 없이 자동 만료를 처리한다
 
 ## 4. 인기 Resource 분석
 
-운동기구의 이용 횟수를 기반으로 인기 순위를 제공한다.
+예약 생성 성공 횟수를 기반으로 인기 순위를 제공한다. UsageHistory(실제 사용 완료 기록, MySQL Source of Truth) 기반 통계와는 별개의 지표다.
 
-Redis Sorted Set을 활용하여 실시간 랭킹을 관리한다.
+Redis Sorted Set을 활용하여 실시간 랭킹을 관리하며, `GET /api/resources/rankings`(TOP N)와 `GET /api/resources/{resourceId}/ranking`(특정 Resource)로 조회한다. Redis ZSET에는 Resource 상태와 무관하게 score가 유지되지만, 사용자 노출 Ranking은 ACTIVE Resource만 필터링하고 그 안에서 1부터 시작하는 연속 순위를 다시 매긴다. Redis 장애 시 Fail-Open으로 처리한다(TOP N은 빈 목록, 특정 Resource는 rank=null/score=0).
 
 ---
 
@@ -209,6 +209,8 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 - 체크인
 - 체크아웃
+- 내 이용 이력 조회(기간 필터, Pagination)
+- 내 이용 통계 조회(총 이용 횟수/시간, Resource별 통계)
 
 ---
 
@@ -223,6 +225,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 - 즐겨찾기
 - 인기 운동기구 조회
+- 인기 Resource TOP N 조회, 특정 Resource Ranking 조회
 
 ---
 
@@ -239,10 +242,10 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 ### Resource 관리
 
-- 등록
-- 수정
-- 삭제
-- 점검 모드
+- 등록 (Resource + ReservationPolicy 동시 생성, 초기 상태는 ACTIVE로 서버에서 고정)
+- 수정 (name/capacity/description/ReservationPolicy, type과 status는 별도 정책으로 관리)
+- 삭제 (물리 삭제 없이 INACTIVE 상태로 대체)
+- 점검 모드 (ACTIVE ↔ MAINTENANCE ↔ INACTIVE 상태 변경, 활성 예약/승급 제안이 있으면 차단)
 - 예약 제한
 
 ---
@@ -253,6 +256,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 - 예약률
 - 인기 Resource
 - 이용 시간 분석
+- 특정 Resource의 누적 이용 통계 조회(`GET /api/admin/resources/{resourceId}/statistics`)
 
 ---
 
@@ -359,7 +363,7 @@ Resource 조회
 
 ↓
 
-IN_USE
+CHECKED_IN
 
 ↓
 
@@ -367,7 +371,7 @@ IN_USE
 
 ↓
 
-AVAILABLE
+COMPLETED
 ```
 
 ---
