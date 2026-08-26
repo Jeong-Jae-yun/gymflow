@@ -9,5 +9,6 @@ Thumbs.db
 
 ### Environment ###
 .env
+.env.prod
 
 

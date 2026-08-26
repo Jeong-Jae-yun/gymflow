@@ -1,0 +1,28 @@
+# Secrets
+.env
+.env.*
+
+# Gradle build 산출물 / 캐시
+.gradle/
+build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 로그
+*.log
+logs/
+
+# Git 메타데이터
+.git/
+.gitignore
+.gitattributes
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 문서
+HELP.md
