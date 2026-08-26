@@ -140,6 +140,91 @@ class ResourceRankingRedisRepositoryTest {
         assertThat(resourceRankingRedisRepository.findScore(RESOURCE_102)).contains(5L);
     }
 
+    @Test
+    @DisplayName("findTopResources(offset, size)는 offset=0부터 batch 크기만큼 score 내림차순으로 반환한다")
+    void findTopResourcesWithOffset_WithFirstBatch_ShouldReturnDescendingByScore() {
+        // given
+        incrementBy(RESOURCE_101, 10);
+        incrementBy(RESOURCE_102, 20);
+        incrementBy(RESOURCE_103, 15);
+
+        // when
+        List<ResourceRankingRedisRepository.RankedResource> batch =
+                resourceRankingRedisRepository.findTopResources(0, 2);
+
+        // then
+        assertThat(batch).extracting(ResourceRankingRedisRepository.RankedResource::resourceId)
+                .containsExactly(RESOURCE_102, RESOURCE_103);
+        assertThat(batch).extracting(ResourceRankingRedisRepository.RankedResource::score)
+                .containsExactly(20L, 15L);
+    }
+
+    @Test
+    @DisplayName("findTopResources(offset, size)는 다음 offset부터 이어서 조회할 수 있다")
+    void findTopResourcesWithOffset_WithNextBatch_ShouldContinueFromOffset() {
+        // given
+        incrementBy(RESOURCE_101, 10);
+        incrementBy(RESOURCE_102, 20);
+        incrementBy(RESOURCE_103, 15);
+
+        // when
+        List<ResourceRankingRedisRepository.RankedResource> secondBatch =
+                resourceRankingRedisRepository.findTopResources(2, 2);
+
+        // then
+        assertThat(secondBatch).extracting(ResourceRankingRedisRepository.RankedResource::resourceId)
+                .containsExactly(RESOURCE_101);
+        assertThat(secondBatch).extracting(ResourceRankingRedisRepository.RankedResource::score)
+                .containsExactly(10L);
+    }
+
+    @Test
+    @DisplayName("Ranking이 비어있으면 findTopResources(offset, size)는 빈 목록을 반환한다")
+    void findTopResourcesWithOffset_WithEmptyRanking_ShouldReturnEmptyList() {
+        // when
+        List<ResourceRankingRedisRepository.RankedResource> batch =
+                resourceRankingRedisRepository.findTopResources(0, 20);
+
+        // then
+        assertThat(batch).isEmpty();
+    }
+
+    @Test
+    @DisplayName("offset이 전체 크기를 벗어나면 findTopResources(offset, size)는 빈 목록을 반환한다")
+    void findTopResourcesWithOffset_WithOffsetBeyondEnd_ShouldReturnEmptyList() {
+        // given
+        incrementBy(RESOURCE_101, 10);
+        incrementBy(RESOURCE_102, 20);
+
+        // when
+        List<ResourceRankingRedisRepository.RankedResource> batch =
+                resourceRankingRedisRepository.findTopResources(10, 20);
+
+        // then
+        assertThat(batch).isEmpty();
+    }
+
+    @Test
+    @DisplayName("score가 동점이면 Redis가 반환하는 순서를 그대로 보존한다")
+    void findTopResourcesWithOffset_WithTiedScores_ShouldPreserveRedisOrder() {
+        // given
+        incrementBy(RESOURCE_101, 10);
+        incrementBy(RESOURCE_102, 10);
+        incrementBy(RESOURCE_103, 10);
+
+        // when
+        List<ResourceRankingRedisRepository.RankedResource> batch =
+                resourceRankingRedisRepository.findTopResources(0, 20);
+        List<ResourceRankingRedisRepository.RankedResource> batchAgain =
+                resourceRankingRedisRepository.findTopResources(0, 20);
+
+        // then: 동점 시 Java에서 별도 정렬을 하지 않으므로 반복 조회 시에도 Redis가 반환하는 순서가 동일해야 한다
+        assertThat(batch).extracting(ResourceRankingRedisRepository.RankedResource::resourceId)
+                .containsExactlyElementsOf(
+                        batchAgain.stream().map(ResourceRankingRedisRepository.RankedResource::resourceId).toList());
+        assertThat(batch).hasSize(3);
+    }
+
     private void incrementBy(Long resourceId, int times) {
         for (int i = 0; i < times; i++) {
             resourceRankingRedisRepository.incrementReservationCount(resourceId);

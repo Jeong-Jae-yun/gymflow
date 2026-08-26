@@ -21,8 +21,13 @@ public class ResourceRankingRedisRepository {
     }
 
     public List<RankedResource> findTopResources(int limit) {
+        return findTopResources(0, limit);
+    }
+
+    public List<RankedResource> findTopResources(long offset, int size) {
+        long end = offset + size - 1;
         Set<ZSetOperations.TypedTuple<String>> tuples = redisTemplate.opsForZSet()
-                .reverseRangeWithScores(ResourceRankingKey.RESERVATION_RANKING, 0, limit - 1);
+                .reverseRangeWithScores(ResourceRankingKey.RESERVATION_RANKING, offset, end);
         if (tuples == null) {
             return List.of();
         }

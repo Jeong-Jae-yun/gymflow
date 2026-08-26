@@ -1,8 +1,11 @@
 package com.gymflow.domain.resource.controller;
 
 import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
+import com.gymflow.domain.resource.dto.response.ResourceRankingResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
 import com.gymflow.domain.resource.service.ResourceService;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -41,6 +44,19 @@ public class ResourceController {
     @GetMapping("/{resourceId}")
     public ResponseEntity<ResourceResponse> getResourceDetail(@PathVariable Long resourceId) {
         ResourceResponse response = resourceService.getResourceDetail(resourceId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/rankings")
+    public ResponseEntity<List<ResourceRankingResponse>> getTopRankings(
+            @RequestParam(defaultValue = "10") @Min(1) @Max(100) int limit) {
+        List<ResourceRankingResponse> response = resourceService.getTopRankings(limit);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{resourceId}/ranking")
+    public ResponseEntity<ResourceRankingResponse> getResourceRanking(@PathVariable Long resourceId) {
+        ResourceRankingResponse response = resourceService.getResourceRanking(resourceId);
         return ResponseEntity.ok(response);
     }
 }
