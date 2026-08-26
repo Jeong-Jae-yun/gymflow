@@ -16,6 +16,7 @@ import com.gymflow.domain.resource.mapper.AdminResourceMapper;
 import com.gymflow.domain.waitingqueue.service.PromotionService;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
+import com.gymflow.global.common.transaction.TransactionAwareLockReleaser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,6 +35,7 @@ public class AdminResourceService {
     private final PromotionService promotionService;
     private final ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
     private final ResourceCacheRepository resourceCacheRepository;
+    private final TransactionAwareLockReleaser lockReleaser;
 
     @Transactional
     public AdminResourceResponse createResource(AdminResourceCreateRequest request) {
@@ -85,15 +87,17 @@ public class AdminResourceService {
 
         ResourceStatus newStatus = request.status();
         if (resource.getStatus() != newStatus && isOccupancyBlockingStatus(newStatus)) {
-            // ResourceAvailabilityLock은 이 경로에서 최상위이자 유일한 Lock이므로
-            // PromotionLock/ReservationSlotLock과의 획득 순서 문제가 발생하지 않는다.
             String lockToken = resourceAvailabilityLockRepository.tryLock(resourceId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+            Runnable unlockAction = () -> resourceAvailabilityLockRepository.unlock(resourceId, lockToken);
+            boolean deferred = lockReleaser.register(unlockAction);
             try {
                 validateNoActiveOccupancy(resourceId);
                 resource.changeStatus(newStatus);
             } finally {
-                resourceAvailabilityLockRepository.unlock(resourceId, lockToken);
+                if (!deferred) {
+                    unlockAction.run();
+                }
             }
         } else {
             resource.changeStatus(newStatus);

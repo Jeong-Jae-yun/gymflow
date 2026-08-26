@@ -23,9 +23,11 @@ import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.domain.user.domain.repository.UserRepository;
+import com.gymflow.domain.waitingqueue.service.PromotionProcessor;
 import com.gymflow.domain.waitingqueue.service.PromotionService;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
+import com.gymflow.global.common.transaction.TransactionAwareLockReleaser;
 import com.gymflow.global.security.principal.CustomUserDetails;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -103,6 +105,12 @@ class ReservationServiceTest {
 
     @Mock
     private PromotionService promotionService;
+
+    @Mock
+    private PromotionProcessor promotionProcessor;
+
+    @Mock
+    private TransactionAwareLockReleaser lockReleaser;
 
     @InjectMocks
     private ReservationService reservationService;
@@ -833,7 +841,7 @@ class ReservationServiceTest {
         assertThat(response.status()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(response.cancelReason()).isEqualTo(CancelReason.SCHEDULE_CHANGE);
         verify(reservationNoShowRepository).remove(100L);
-        verify(promotionService).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
+        verify(promotionProcessor).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
     }
 
     @Test
@@ -846,7 +854,7 @@ class ReservationServiceTest {
         when(reservationRepository.findByIdAndUserId(100L, CURRENT_USER_ID)).thenReturn(Optional.of(reservation));
         CancelReservationRequest request = new CancelReservationRequest(CancelReason.SCHEDULE_CHANGE);
         doThrow(new RuntimeException("승급 처리 오류"))
-                .when(promotionService).tryPromote(any(), any(), any());
+                .when(promotionProcessor).tryPromote(any(), any(), any());
 
         // when
         ReservationResponse response = reservationService.cancelReservation(100L, request);
@@ -1596,7 +1604,7 @@ class ReservationServiceTest {
         // then
         assertThat(response.status()).isEqualTo(ReservationStatus.NO_SHOW);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
-        verify(promotionService).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
+        verify(promotionProcessor).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
     }
 
     @Test
@@ -1640,7 +1648,7 @@ class ReservationServiceTest {
 
         // then
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
-        verify(promotionService).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
+        verify(promotionProcessor).tryPromote(RESOURCE_ID, reservation.getStartAt(), reservation.getEndAt());
     }
 
     @ParameterizedTest

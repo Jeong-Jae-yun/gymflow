@@ -16,6 +16,7 @@ import com.gymflow.domain.resource.dto.response.AdminResourceResponse;
 import com.gymflow.domain.waitingqueue.service.PromotionService;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
+import com.gymflow.global.common.transaction.TransactionAwareLockReleaser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,6 +60,9 @@ class AdminResourceServiceTest {
 
     @Mock
     private ResourceCacheRepository resourceCacheRepository;
+
+    @Mock
+    private TransactionAwareLockReleaser lockReleaser;
 
     @InjectMocks
     private AdminResourceService adminResourceService;

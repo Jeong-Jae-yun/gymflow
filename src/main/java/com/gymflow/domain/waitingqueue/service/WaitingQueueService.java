@@ -17,6 +17,7 @@ import com.gymflow.domain.waitingqueue.dto.response.WaitingQueueResponse;
 import com.gymflow.domain.waitingqueue.mapper.WaitingQueueMapper;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
+import com.gymflow.global.common.transaction.TransactionAwareLockReleaser;
 import com.gymflow.global.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,7 @@ public class WaitingQueueService {
     private final UserRepository userRepository;
     private final WaitingQueueRedisRepository waitingQueueRedisRepository;
     private final WaitingQueueRegistrationLockRepository waitingQueueRegistrationLockRepository;
+    private final TransactionAwareLockReleaser lockReleaser;
 
     @Transactional
     public WaitingQueueResponse registerWaitingQueue(WaitingQueueCreateRequest request) {
@@ -66,6 +68,9 @@ public class WaitingQueueService {
         String lockToken = waitingQueueRegistrationLockRepository
                 .tryLock(currentUserId, resource.getId(), startAt, endAt)
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAITING_QUEUE_IN_PROGRESS));
+        Runnable unlockAction = () ->
+                waitingQueueRegistrationLockRepository.unlock(currentUserId, resource.getId(), startAt, endAt, lockToken);
+        boolean deferred = lockReleaser.register(unlockAction);
         try {
             boolean alreadyWaiting = waitingQueueRepository.existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(
                     currentUserId, resource.getId(), startAt, endAt, WaitingQueueStatus.WAITING);
@@ -88,7 +93,9 @@ public class WaitingQueueService {
 
             return WaitingQueueMapper.toResponse(savedWaitingQueue, waitingRank);
         } finally {
-            waitingQueueRegistrationLockRepository.unlock(currentUserId, resource.getId(), startAt, endAt, lockToken);
+            if (!deferred) {
+                unlockAction.run();
+            }
         }
     }
 

@@ -21,9 +21,11 @@ import com.gymflow.domain.usagehistory.domain.entity.UsageHistory;
 import com.gymflow.domain.usagehistory.domain.repository.UsageHistoryRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
+import com.gymflow.domain.waitingqueue.service.PromotionProcessor;
 import com.gymflow.domain.waitingqueue.service.PromotionService;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
+import com.gymflow.global.common.transaction.TransactionAwareLockReleaser;
 import com.gymflow.global.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,15 +53,18 @@ public class ReservationService {
     private final ReservationNoShowRepository reservationNoShowRepository;
     private final ResourceRankingRedisRepository resourceRankingRedisRepository;
     private final PromotionService promotionService;
+    private final PromotionProcessor promotionProcessor;
+    private final TransactionAwareLockReleaser lockReleaser;
 
     @Transactional
     public ReservationResponse createReservation(ReservationCreateRequest request) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         Long resourceId = request.resourceId();
 
-        // Lock hierarchy: ResourceAvailabilityLock -> ReservationSlotLock
         String availabilityLockToken = resourceAvailabilityLockRepository.tryLock(resourceId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+
+        boolean releaseAvailabilityImmediately = true;
         try {
             Resource resource = resourceRepository.findWithReservationPolicyById(resourceId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
@@ -83,6 +88,13 @@ public class ReservationService {
 
             ReservationSlotLockHandle lockHandle = reservationSlotLockRepository.tryLockAll(resource.getId(), startAt, endAt)
                     .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+            releaseAvailabilityImmediately = false;
+
+            Runnable unlockAction = () -> {
+                reservationSlotLockRepository.unlockAll(lockHandle);
+                resourceAvailabilityLockRepository.unlock(resourceId, availabilityLockToken);
+            };
+            boolean deferred = lockReleaser.register(unlockAction);
             try {
                 boolean hasConflict = reservationRepository.existsOverlapping(
                         resource.getId(), ReservationStatus.OCCUPYING_STATUSES, startAt, endAt);
@@ -110,10 +122,14 @@ public class ReservationService {
 
                 return ReservationMapper.toResponse(savedReservation);
             } finally {
-                reservationSlotLockRepository.unlockAll(lockHandle);
+                if (!deferred) {
+                    unlockAction.run();
+                }
             }
         } finally {
-            resourceAvailabilityLockRepository.unlock(resourceId, availabilityLockToken);
+            if (releaseAvailabilityImmediately) {
+                resourceAvailabilityLockRepository.unlock(resourceId, availabilityLockToken);
+            }
         }
     }
 
@@ -188,6 +204,8 @@ public class ReservationService {
         LocalDateTime deltaStart = reservation.getEndAt();
         ReservationSlotLockHandle lockHandle = reservationSlotLockRepository.tryLockAll(resource.getId(), deltaStart, newEndAt)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESERVATION_IN_PROGRESS));
+        Runnable unlockAction = () -> reservationSlotLockRepository.unlockAll(lockHandle);
+        boolean deferred = lockReleaser.register(unlockAction);
         try {
             boolean hasConflict = reservationRepository.existsOverlappingExcludingReservation(
                     resource.getId(), ReservationStatus.OCCUPYING_STATUSES, deltaStart, newEndAt, reservation.getId());
@@ -203,7 +221,9 @@ public class ReservationService {
 
             return ReservationMapper.toResponse(reservation);
         } finally {
-            reservationSlotLockRepository.unlockAll(lockHandle);
+            if (!deferred) {
+                unlockAction.run();
+            }
         }
     }
 
@@ -276,7 +296,7 @@ public class ReservationService {
 
     private void tryPromoteWaitingQueue(Reservation reservation) {
         try {
-            promotionService.tryPromote(
+            promotionProcessor.tryPromote(
                     reservation.getResource().getId(), reservation.getStartAt(), reservation.getEndAt());
         } catch (RuntimeException e) {
             log.error("WaitingQueue 자동 승급 처리 중 오류가 발생했습니다. reservationId={}", reservation.getId(), e);

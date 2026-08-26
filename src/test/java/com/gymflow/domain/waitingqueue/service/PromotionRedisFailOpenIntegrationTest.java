@@ -178,8 +178,9 @@ class PromotionRedisFailOpenIntegrationTest {
         doThrow(new RedisConnectionFailureException("연결 실패"))
                 .when(waitingQueueRedisRepository).findAll(eq(resourceId), eq(startAt));
 
-        // when: B가 승급 기회를 거절한다 (reject()는 내부에서 self-invocation으로 tryPromote()를 다시 호출하며,
-        // 이때 두 번째 findAll 호출이 Redis 장애로 실패한다)
+        // when: B가 승급 기회를 거절한다 (reject()는 자신의 transaction commit 이후 별도 Bean인
+        // PromotionProcessor.tryPromote()를 새 transaction에서 호출하며, 이때 findAll 호출이
+        // Redis 장애로 실패한다)
         authenticateAs(userBId);
         promotionService.reject(promotion.getId());
         SecurityContextHolder.clearContext();

@@ -18,6 +18,7 @@ import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
 import com.gymflow.domain.waitingqueue.dto.response.WaitingQueueResponse;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
+import com.gymflow.global.common.transaction.TransactionAwareLockReleaser;
 import com.gymflow.global.security.principal.CustomUserDetails;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,6 +77,9 @@ class WaitingQueueServiceTest {
 
     @Mock
     private WaitingQueueRegistrationLockRepository waitingQueueRegistrationLockRepository;
+
+    @Mock
+    private TransactionAwareLockReleaser lockReleaser;
 
     @InjectMocks
     private WaitingQueueService waitingQueueService;
