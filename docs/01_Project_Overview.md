@@ -363,7 +363,7 @@ Resource 조회
 
 ↓
 
-IN_USE
+CHECKED_IN
 
 ↓
 
@@ -371,7 +371,7 @@ IN_USE
 
 ↓
 
-AVAILABLE
+COMPLETED
 ```
 
 ---
