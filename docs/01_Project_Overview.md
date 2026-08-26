@@ -11,7 +11,7 @@
 | Document | Project Overview |
 | Version | v1.0             |
 | Author | 정재윤              |
-| Last Updated | 2026-08-25       |
+| Last Updated | 2026-08-26       |
 ---
 
 # 1. 프로젝트 소개
@@ -209,6 +209,8 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 - 체크인
 - 체크아웃
+- 내 이용 이력 조회(기간 필터, Pagination)
+- 내 이용 통계 조회(총 이용 횟수/시간, Resource별 통계)
 
 ---
 
@@ -253,6 +255,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 - 예약률
 - 인기 Resource
 - 이용 시간 분석
+- 특정 Resource의 누적 이용 통계 조회(`GET /api/admin/resources/{resourceId}/statistics`)
 
 ---
 

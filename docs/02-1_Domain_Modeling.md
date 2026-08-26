@@ -7,7 +7,7 @@
 | Document | Domain Modeling |
 | Version | v1.0            |
 | Author | 정재윤             |
-| Last Updated | 2026-08-25      |
+| Last Updated | 2026-08-26      |
 
 ---
 
@@ -444,6 +444,11 @@ OFFERED 상태를 생성하여 사용자에게 예약 기회를 제공하는 방
 ### 포함
 
 - UsageHistory (Aggregate Root)
+
+UsageHistory는 통계의 Source of Truth이며, 사용자는 `GET /api/usage-histories`(내 이용 이력)와
+`GET /api/usage-histories/statistics`(내 이용 통계)로, 관리자는
+`GET /api/admin/resources/{resourceId}/statistics`로 특정 Resource의 누적 이용 통계를 조회한다.
+모든 기간 필터는 `startedAt` 기준 `[from, to)` 반개구간이며, 통계는 MySQL COUNT/SUM/GROUP BY로 계산한다.
 
 ---
 

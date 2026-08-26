@@ -390,6 +390,13 @@ UsageHistory
 - 생성 이후 수정하지 않는다.
 - 삭제하지 않는다.
 - 통계 및 Ranking의 데이터로 활용된다.
+- UsageHistory는 통계의 Source of Truth다. 통계 계산 시 ReservationStatus를 다시 JOIN해서 COMPLETED 여부를 재검증하지 않으며, DB에 존재하는 UsageHistory 자체를 실제 사용 완료 기록으로 간주한다.
+- Resource의 상태(ACTIVE/MAINTENANCE/INACTIVE)와 무관하게 과거 UsageHistory 조회/통계에서 제외하지 않는다. Resource를 물리 삭제하지 않고 INACTIVE로 유지하는 이유 중 하나가 이 참조 무결성 및 통계 보존이다.
+- UsageHistory에는 Resource 이름 등의 snapshot 컬럼을 두지 않는다. 조회 응답의 Resource name/type/status는 현재 Resource Entity를 JOIN해서 가져오므로, 관리자가 Resource 이름을 변경하면 과거 UsageHistory 조회에서도 현재 이름이 노출된다.
+- 사용자는 `GET /api/usage-histories`(목록, 기간/페이지네이션 지원)와 `GET /api/usage-histories/statistics`(내 통계)로 본인의 이용 이력만 조회할 수 있으며, userId를 query parameter로 받지 않고 JWT 인증 정보에서 추출한다. 관리자는 `GET /api/admin/resources/{resourceId}/statistics`로 특정 Resource의 누적 이용 통계를 조회한다(별도의 AdminUsageHistoryController 없이 기존 `AdminResourceController`에 위치).
+- 모든 조회/통계의 기간 필터는 `startedAt` 기준 반개구간 `[from, to)`로 통일한다(`from`은 포함, `to`는 제외). `from`/`to`가 모두 있을 때 `from >= to`이면 400 `INVALID_DATE_RANGE`로 거부된다. `endedAt`이 기간을 넘어가는 세션도 월/기간 경계로 분할하지 않고 `startedAt`이 속한 기간에 duration 전체를 귀속시킨다.
+- 총 이용 횟수/시간, Resource별 통계는 애플리케이션에서 List를 순회하지 않고 MySQL의 COUNT/SUM/GROUP BY로 계산한다(0건일 때 SUM은 COALESCE로 0 처리).
+- 조회 패턴(`user_id + started_at`, `resource_id + started_at`)에 맞춰 `usage_histories` 테이블에 복합 인덱스 `idx_usage_history_user_started(user_id, started_at)`, `idx_usage_history_resource_started(resource_id, started_at)`를 둔다. 기존 `reservation_id` UNIQUE 제약은 그대로 유지된다.
 
 ---
 
