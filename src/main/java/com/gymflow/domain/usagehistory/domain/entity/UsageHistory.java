@@ -19,7 +19,11 @@ import java.time.LocalDateTime;
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_usage_history_reservation",
                 columnNames = "reservation_id"
-        )
+        ),
+        indexes = {
+                @Index(name = "idx_usage_history_user_started", columnList = "user_id, started_at"),
+                @Index(name = "idx_usage_history_resource_started", columnList = "resource_id, started_at")
+        }
 )
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
