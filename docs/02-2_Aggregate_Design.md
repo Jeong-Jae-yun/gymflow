@@ -532,9 +532,20 @@ Resource의 현재 예약 가능 여부를 계산한다.
 
 책임
 
-UsageHistory를 기반으로 인기 Resource 점수를 계산한다.
+Reservation 생성 성공 시 Resource별 점수를 Redis Sorted Set(ZSET, `gymflow:ranking:resource:reservation`)에
+누적한다. UsageHistory(실제 사용 완료 기록)를 기반으로 계산하지 않으며, 예약 취소/NO_SHOW/체크아웃 시
+별도의 감소나 재계산도 수행하지 않는다.
 
-계산 결과는 Redis Sorted Set에 저장된다.
+Resource 상태가 MAINTENANCE/INACTIVE로 바뀌어도 ZSET의 score와 membership은 그대로 유지된다(원본
+Ranking은 상태와 무관하게 보존). 반면 사용자에게 노출하는 Ranking(`GET /api/resources/rankings`,
+`GET /api/resources/{resourceId}/ranking`)은 ACTIVE Resource만 필터링한 뒤 1부터 시작하는 연속 순위를
+다시 매긴다. `ResourceService`가 Redis raw ranking을 offset 0부터 20개 단위(`RANKING_SCAN_BATCH_SIZE`)로
+순차 조회하면서 MySQL에서 ACTIVE 여부를 확인하는 방식으로 이 재번호를 수행하며, MySQL에 존재하지 않는
+stale Redis ID는 조회를 실패시키지 않고 건너뛴다. Redis 조회가 배치 도중 실패하면 이미 모은 부분 결과를
+버리고 Ranking 전체를 unavailable로 취급하는 Fail-Open으로 처리한다(TOP N은 빈 목록, 특정 Resource는
+rank=null/score=0). Resource가 매우 많고 상위 raw ranking 대부분이 비활성 상태라면 특정 Resource의
+ACTIVE 순위를 계산하기 위해 다수의 batch를 scan해야 할 수 있다는 known scalability limitation이 있으며,
+현재 MVP 범위에서는 이를 허용하고 향후 ACTIVE 전용 별도 ZSET 등으로 개선할 수 있다.
 
 ---
 

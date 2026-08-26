@@ -450,6 +450,11 @@ UsageHistory는 통계의 Source of Truth이며, 사용자는 `GET /api/usage-hi
 `GET /api/admin/resources/{resourceId}/statistics`로 특정 Resource의 누적 이용 통계를 조회한다.
 모든 기간 필터는 `startedAt` 기준 `[from, to)` 반개구간이며, 통계는 MySQL COUNT/SUM/GROUP BY로 계산한다.
 
+인기 Resource Ranking은 UsageHistory 통계와 의미가 다른 별개의 지표다. Ranking의 score는 예약 생성
+성공 횟수를 Redis Sorted Set(ZSET)에 누적한 값이며, UsageHistory 기반 통계처럼 실제 사용 완료 여부를
+반영하지 않는다. 사용자는 `GET /api/resources/rankings`(TOP N)와 `GET /api/resources/{resourceId}/ranking`
+(특정 Resource)로 조회하며, 두 지표는 서로 혼합해서 계산하지 않는다.
+
 ---
 
 # 9. Context Mapping
