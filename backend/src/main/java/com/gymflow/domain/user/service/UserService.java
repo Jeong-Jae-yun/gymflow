@@ -7,6 +7,7 @@ import com.gymflow.domain.user.dto.response.UserResponse;
 import com.gymflow.domain.user.mapper.UserMapper;
 import com.gymflow.global.common.exception.BusinessException;
 import com.gymflow.global.common.exception.ErrorCode;
+import com.gymflow.global.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -35,5 +36,14 @@ public class UserService {
         User savedUser = userRepository.save(user);
 
         return UserMapper.toResponse(savedUser);
+    }
+
+    public UserResponse getMe() {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+
+        User user = userRepository.findById(currentUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+
+        return UserMapper.toResponse(user);
     }
 }
