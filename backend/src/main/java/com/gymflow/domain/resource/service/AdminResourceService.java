@@ -39,6 +39,13 @@ public class AdminResourceService {
     private final TransactionAwareLockReleaser lockReleaser;
     private final ResourceImageStorage resourceImageStorage;
 
+    public AdminResourceResponse getResource(Long resourceId) {
+        Resource resource = resourceRepository.findWithReservationPolicyById(resourceId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        return AdminResourceMapper.toResponse(resource, resolveImageUrl(resource.getImageKey()));
+    }
+
     @Transactional
     public AdminResourceResponse createResource(AdminResourceCreateRequest request) {
         validatePolicyCombination(request.slotDuration(), request.minDuration(), request.maxDuration());

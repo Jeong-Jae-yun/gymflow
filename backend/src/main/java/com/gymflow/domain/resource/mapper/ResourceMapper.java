@@ -17,6 +17,7 @@ public final class ResourceMapper {
                 resource.getType(),
                 resource.getStatus(),
                 resource.getCapacity(),
+                resource.getDescription(),
                 toReservationPolicySummary(resource.getReservationPolicy()),
                 imageUrl
         );

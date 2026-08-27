@@ -37,6 +37,12 @@ public class AdminResourceController {
     private final AdminResourceImageService adminResourceImageService;
     private final UsageHistoryService usageHistoryService;
 
+    @GetMapping("/{resourceId}")
+    public ResponseEntity<AdminResourceResponse> getResource(@PathVariable Long resourceId) {
+        AdminResourceResponse response = adminResourceService.getResource(resourceId);
+        return ResponseEntity.ok(response);
+    }
+
     @PostMapping
     public ResponseEntity<AdminResourceResponse> create(@Valid @RequestBody AdminResourceCreateRequest request) {
         AdminResourceResponse response = adminResourceService.createResource(request);
