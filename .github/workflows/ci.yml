@@ -1,0 +1,70 @@
+name: GymFlow Backend CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DB_URL: jdbc:mysql://localhost:3306/gymflow_test
+  DB_USERNAME: test
+  DB_PASSWORD: test
+  REDIS_HOST: localhost
+  REDIS_PORT: 6379
+
+  JWT_SECRET: Z3ltZmxvdy1jaS1kdW1teS1qd3Qtc2VjcmV0LWZvci10ZXN0aW5nLW9ubHktbm90LWZvci1wcm9kdWN0aW9uLXVzZQ==
+  JWT_ACCESS_TOKEN_EXPIRATION: 3600000
+  FRONTEND_ORIGIN: http://localhost:3000
+  AWS_REGION: ap-northeast-2
+  S3_RESOURCE_IMAGE_BUCKET: gymflow-resource-images-test
+
+jobs:
+  backend-ci:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile main sources
+        run: ./gradlew compileJava
+
+      - name: Compile test sources
+        run: ./gradlew compileTestJava
+
+      - name: Run tests
+        run: ./gradlew test --rerun
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gymflow-test-report
+          path: |
+            backend/build/reports/tests/test
+            backend/build/test-results/test
+          retention-days: 7
