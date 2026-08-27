@@ -8,9 +8,11 @@ import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
+import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueuePromotion;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRegistrationLockRepository;
+import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueuePromotionRepository;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueueRepository;
 import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
 import com.gymflow.domain.waitingqueue.dto.response.WaitingQueueResponse;
@@ -40,6 +42,7 @@ public class WaitingQueueService {
     private final UserRepository userRepository;
     private final WaitingQueueRedisRepository waitingQueueRedisRepository;
     private final WaitingQueueRegistrationLockRepository waitingQueueRegistrationLockRepository;
+    private final WaitingQueuePromotionRepository waitingQueuePromotionRepository;
     private final TransactionAwareLockReleaser lockReleaser;
 
     @Transactional
@@ -91,7 +94,7 @@ public class WaitingQueueService {
 
             Long waitingRank = registerToRedisAndGetRank(savedWaitingQueue);
 
-            return WaitingQueueMapper.toResponse(savedWaitingQueue, waitingRank);
+            return WaitingQueueMapper.toResponse(savedWaitingQueue, waitingRank, null);
         } finally {
             if (!deferred) {
                 unlockAction.run();
@@ -157,6 +160,16 @@ public class WaitingQueueService {
                 log.error("Redis 대기 순번 조회에 실패했습니다. waitingQueueId={}", waitingQueue.getId(), e);
             }
         }
-        return WaitingQueueMapper.toResponse(waitingQueue, waitingRank);
+        Long promotionId = resolvePromotionId(waitingQueue);
+        return WaitingQueueMapper.toResponse(waitingQueue, waitingRank, promotionId);
+    }
+
+    private Long resolvePromotionId(WaitingQueue waitingQueue) {
+        if (waitingQueue.getStatus() != WaitingQueueStatus.PROMOTED) {
+            return null;
+        }
+        return waitingQueuePromotionRepository.findByWaitingQueueId(waitingQueue.getId())
+                .map(WaitingQueuePromotion::getId)
+                .orElse(null);
     }
 }

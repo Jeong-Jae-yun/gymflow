@@ -181,6 +181,7 @@ public class PromotionProcessor {
 
     private void publishPromotedEvent(WaitingQueuePromotion promotion, LocalDateTime promotedAt) {
         WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(
+                promotion.getId(),
                 promotion.getWaitingQueue().getId(),
                 promotion.getUser().getId(),
                 promotion.getResource().getId(),

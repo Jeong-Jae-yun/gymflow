@@ -8,7 +8,7 @@ public final class WaitingQueueMapper {
     private WaitingQueueMapper() {
     }
 
-    public static WaitingQueueResponse toResponse(WaitingQueue waitingQueue, Long waitingRank) {
+    public static WaitingQueueResponse toResponse(WaitingQueue waitingQueue, Long waitingRank, Long promotionId) {
         return new WaitingQueueResponse(
                 waitingQueue.getId(),
                 waitingQueue.getResource().getId(),
@@ -16,7 +16,8 @@ public final class WaitingQueueMapper {
                 waitingQueue.getEndAt(),
                 waitingQueue.getStatus(),
                 waitingQueue.getCreatedAt(),
-                waitingRank
+                waitingRank,
+                promotionId
         );
     }
 }

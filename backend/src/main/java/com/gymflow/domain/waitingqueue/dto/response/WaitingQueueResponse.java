@@ -11,6 +11,7 @@ public record WaitingQueueResponse(
         LocalDateTime endAt,
         WaitingQueueStatus status,
         LocalDateTime createdAt,
-        Long waitingRank
+        Long waitingRank,
+        Long promotionId
 ) {
 }
