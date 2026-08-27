@@ -8,6 +8,7 @@ import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository.RankedResource;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.resource.domain.storage.ResourceImageStorage;
 import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
 import com.gymflow.domain.resource.dto.response.ReservationPolicySummaryResponse;
 import com.gymflow.domain.resource.dto.response.ResourceRankingResponse;
@@ -57,6 +58,9 @@ class ResourceServiceTest {
 
     @Mock
     private ResourceRankingRedisRepository resourceRankingRedisRepository;
+
+    @Mock
+    private ResourceImageStorage resourceImageStorage;
 
     @InjectMocks
     private ResourceService resourceService;
@@ -115,6 +119,24 @@ class ResourceServiceTest {
     }
 
     @Test
+    @DisplayName("목록 조회 시 imageKey가 있는 Resource는 imageUrl이 resolve되어 채워진다")
+    void getResources_WithImageKey_ShouldResolveImageUrl() {
+        // given
+        Resource resource = resourceWithPolicy();
+        resource.changeImageKey("resources/10/sample.jpg");
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<Resource> page = new PageImpl<>(List.of(resource), pageable, 1);
+        when(resourceRepository.findAll(pageable)).thenReturn(page);
+        when(resourceImageStorage.generateReadUrl("resources/10/sample.jpg")).thenReturn("https://signed/sample.jpg");
+
+        // when
+        Page<ResourceResponse> response = resourceService.getResources(pageable);
+
+        // then
+        assertThat(response.getContent().get(0).imageUrl()).isEqualTo("https://signed/sample.jpg");
+    }
+
+    @Test
     @DisplayName("ReservationPolicy가 없는 Resource는 reservationPolicy가 null로 조회된다")
     void getResources_WithoutReservationPolicy_ShouldReturnNullPolicy() {
         // given
@@ -156,7 +178,8 @@ class ResourceServiceTest {
         // given
         ResourceResponse cachedResponse = new ResourceResponse(
                 RESOURCE_ID, "Chest Press A-1", ResourceType.MACHINE, ResourceStatus.ACTIVE, 1,
-                new ReservationPolicySummaryResponse(15, 15, 60));
+                new ReservationPolicySummaryResponse(15, 15, 60),
+                "https://gymflow-resource-images.s3.ap-northeast-2.amazonaws.com/resources/10/sample.jpg");
         when(resourceCacheRepository.get(RESOURCE_ID)).thenReturn(Optional.of(cachedResponse));
 
         // when
@@ -218,6 +241,37 @@ class ResourceServiceTest {
         assertThat(captor.getValue().reservationPolicy().slotDuration()).isEqualTo(15);
         assertThat(captor.getValue().reservationPolicy().minDuration()).isEqualTo(15);
         assertThat(captor.getValue().reservationPolicy().maxDuration()).isEqualTo(60);
+    }
+
+    @Test
+    @DisplayName("imageKey가 없는 Resource를 조회하면 imageUrl은 null이며 Presigned URL을 생성하지 않는다")
+    void getResourceDetail_WithoutImageKey_ShouldReturnNullImageUrl() {
+        // given
+        Resource resource = resourceWithPolicy();
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when
+        ResourceResponse response = resourceService.getResourceDetail(RESOURCE_ID);
+
+        // then
+        assertThat(response.imageUrl()).isNull();
+        verify(resourceImageStorage, never()).generateReadUrl(any());
+    }
+
+    @Test
+    @DisplayName("imageKey가 있는 Resource를 조회하면 Presigned URL을 생성해 imageUrl로 반환한다")
+    void getResourceDetail_WithImageKey_ShouldResolveImageUrl() {
+        // given
+        Resource resource = resourceWithPolicy();
+        resource.changeImageKey("resources/10/sample.jpg");
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceImageStorage.generateReadUrl("resources/10/sample.jpg")).thenReturn("https://signed/sample.jpg");
+
+        // when
+        ResourceResponse response = resourceService.getResourceDetail(RESOURCE_ID);
+
+        // then
+        assertThat(response.imageUrl()).isEqualTo("https://signed/sample.jpg");
     }
 
     @Test

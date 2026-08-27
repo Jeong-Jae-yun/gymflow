@@ -15,6 +15,7 @@ public record AdminResourceResponse(
         Integer slotDuration,
         Integer minDuration,
         Integer maxDuration,
+        String imageUrl,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

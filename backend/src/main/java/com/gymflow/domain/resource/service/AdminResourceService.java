@@ -8,6 +8,7 @@ import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.resource.domain.storage.ResourceImageStorage;
 import com.gymflow.domain.resource.dto.request.AdminResourceCreateRequest;
 import com.gymflow.domain.resource.dto.request.AdminResourceStatusUpdateRequest;
 import com.gymflow.domain.resource.dto.request.AdminResourceUpdateRequest;
@@ -36,6 +37,7 @@ public class AdminResourceService {
     private final ResourceAvailabilityLockRepository resourceAvailabilityLockRepository;
     private final ResourceCacheRepository resourceCacheRepository;
     private final TransactionAwareLockReleaser lockReleaser;
+    private final ResourceImageStorage resourceImageStorage;
 
     @Transactional
     public AdminResourceResponse createResource(AdminResourceCreateRequest request) {
@@ -57,7 +59,7 @@ public class AdminResourceService {
 
         Resource saved = resourceRepository.save(resource);
 
-        return AdminResourceMapper.toResponse(saved);
+        return AdminResourceMapper.toResponse(saved, resolveImageUrl(saved.getImageKey()));
     }
 
     @Transactional
@@ -77,7 +79,7 @@ public class AdminResourceService {
 
         evictCache(resourceId);
 
-        return AdminResourceMapper.toResponse(resource);
+        return AdminResourceMapper.toResponse(resource, resolveImageUrl(resource.getImageKey()));
     }
 
     @Transactional
@@ -105,7 +107,11 @@ public class AdminResourceService {
 
         evictCache(resourceId);
 
-        return AdminResourceMapper.toResponse(resource);
+        return AdminResourceMapper.toResponse(resource, resolveImageUrl(resource.getImageKey()));
+    }
+
+    private String resolveImageUrl(String imageKey) {
+        return imageKey == null ? null : resourceImageStorage.generateReadUrl(imageKey);
     }
 
     private boolean isOccupancyBlockingStatus(ResourceStatus status) {

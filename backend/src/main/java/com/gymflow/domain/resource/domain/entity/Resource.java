@@ -36,6 +36,9 @@ public class Resource extends BaseEntity {
     @Column(name = "description", length = 500)
     private String description;
 
+    @Column(name = "image_key", length = 500)
+    private String imageKey;
+
     @OneToOne(mappedBy = "resource", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
     private ReservationPolicy reservationPolicy;
 
@@ -65,6 +68,17 @@ public class Resource extends BaseEntity {
             throw new IllegalArgumentException("status는 필수입니다.");
         }
         this.status = status;
+    }
+
+    public void changeImageKey(String imageKey) {
+        if (imageKey == null || imageKey.isBlank()) {
+            throw new IllegalArgumentException("imageKey는 필수입니다.");
+        }
+        this.imageKey = imageKey;
+    }
+
+    public void removeImageKey() {
+        this.imageKey = null;
     }
 
     private static void validateCapacity(Integer capacity) {

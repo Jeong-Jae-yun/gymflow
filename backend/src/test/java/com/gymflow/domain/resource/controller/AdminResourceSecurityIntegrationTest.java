@@ -5,6 +5,7 @@ import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.resource.domain.storage.ResourceImageStorage;
 import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.global.security.jwt.JwtTokenProvider;
 import org.junit.jupiter.api.DisplayName;
@@ -13,12 +14,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.Map;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -40,6 +48,9 @@ class AdminResourceSecurityIntegrationTest {
 
     @Autowired
     private ResourceRepository resourceRepository;
+
+    @MockitoBean
+    private ResourceImageStorage resourceImageStorage;
 
     private String adminToken() {
         return jwtTokenProvider.createAccessToken(1L, "admin@gymflow.com", UserRole.ADMIN);
@@ -181,6 +192,72 @@ class AdminResourceSecurityIntegrationTest {
         mockMvc.perform(patch("/api/admin/resources/{resourceId}/status", resource.getId())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("status", "MAINTENANCE"))))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("ADMIN 권한으로 이미지를 업로드하면 200 OK를 반환한다")
+    void uploadImage_WithAdminRole_ShouldReturnOk() throws Exception {
+        Resource resource = persistResourceWithPolicy("Admin Image Upload Target " + System.nanoTime());
+        when(resourceImageStorage.upload(any(), any())).thenReturn("resources/" + resource.getId() + "/key.jpg");
+        when(resourceImageStorage.generateReadUrl(any())).thenReturn("https://signed.example.com/key.jpg");
+        MockMultipartFile file = new MockMultipartFile("file", "photo.jpg", "image/jpeg", "dummy".getBytes());
+
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/admin/resources/{resourceId}/image", resource.getId())
+                        .file(file)
+                        .header("Authorization", "Bearer " + adminToken()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("USER 권한으로 이미지 업로드를 요청하면 403 Forbidden을 반환한다")
+    void uploadImage_WithUserRole_ShouldReturnForbidden() throws Exception {
+        Resource resource = persistResourceWithPolicy("User Image Upload Target " + System.nanoTime());
+        MockMultipartFile file = new MockMultipartFile("file", "photo.jpg", "image/jpeg", "dummy".getBytes());
+
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/admin/resources/{resourceId}/image", resource.getId())
+                        .file(file)
+                        .header("Authorization", "Bearer " + userToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("토큰 없이 이미지 업로드를 요청하면 401 Unauthorized를 반환한다")
+    void uploadImage_WithoutToken_ShouldReturnUnauthorized() throws Exception {
+        Resource resource = persistResourceWithPolicy("No Token Image Upload Target " + System.nanoTime());
+        MockMultipartFile file = new MockMultipartFile("file", "photo.jpg", "image/jpeg", "dummy".getBytes());
+
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/admin/resources/{resourceId}/image", resource.getId())
+                        .file(file))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("ADMIN 권한으로 이미지를 삭제하면 204 No Content를 반환한다")
+    void deleteImage_WithAdminRole_ShouldReturnNoContent() throws Exception {
+        Resource resource = persistResourceWithPolicy("Admin Image Delete Target " + System.nanoTime());
+
+        mockMvc.perform(delete("/api/admin/resources/{resourceId}/image", resource.getId())
+                        .header("Authorization", "Bearer " + adminToken()))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @DisplayName("USER 권한으로 이미지 삭제를 요청하면 403 Forbidden을 반환한다")
+    void deleteImage_WithUserRole_ShouldReturnForbidden() throws Exception {
+        Resource resource = persistResourceWithPolicy("User Image Delete Target " + System.nanoTime());
+
+        mockMvc.perform(delete("/api/admin/resources/{resourceId}/image", resource.getId())
+                        .header("Authorization", "Bearer " + userToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("토큰 없이 이미지 삭제를 요청하면 401 Unauthorized를 반환한다")
+    void deleteImage_WithoutToken_ShouldReturnUnauthorized() throws Exception {
+        Resource resource = persistResourceWithPolicy("No Token Image Delete Target " + System.nanoTime());
+
+        mockMvc.perform(delete("/api/admin/resources/{resourceId}/image", resource.getId()))
                 .andExpect(status().isUnauthorized());
     }
 }

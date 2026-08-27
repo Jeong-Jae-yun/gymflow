@@ -10,14 +10,15 @@ public final class ResourceMapper {
     private ResourceMapper() {
     }
 
-    public static ResourceResponse toResponse(Resource resource) {
+    public static ResourceResponse toResponse(Resource resource, String imageUrl) {
         return new ResourceResponse(
                 resource.getId(),
                 resource.getName(),
                 resource.getType(),
                 resource.getStatus(),
                 resource.getCapacity(),
-                toReservationPolicySummary(resource.getReservationPolicy())
+                toReservationPolicySummary(resource.getReservationPolicy()),
+                imageUrl
         );
     }
 

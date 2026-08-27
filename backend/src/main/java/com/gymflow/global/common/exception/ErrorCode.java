@@ -37,7 +37,13 @@ public enum ErrorCode {
     PROMOTION_CHECKIN_EXPIRED(HttpStatus.CONFLICT, "승급 예약의 체크인 가능 시간이 만료되었습니다."),
     INVALID_RESERVATION_POLICY(HttpStatus.BAD_REQUEST, "예약 정책 조합이 올바르지 않습니다."),
     RESOURCE_STATUS_CHANGE_NOT_ALLOWED(HttpStatus.CONFLICT, "활성 예약 또는 승급 제안이 존재하여 리소스 상태를 변경할 수 없습니다."),
-    INVALID_DATE_RANGE(HttpStatus.BAD_REQUEST, "조회 시작 시각은 종료 시각보다 이전이어야 합니다.");
+    INVALID_DATE_RANGE(HttpStatus.BAD_REQUEST, "조회 시작 시각은 종료 시각보다 이전이어야 합니다."),
+    INVALID_IMAGE_FILE(HttpStatus.BAD_REQUEST, "이미지 파일이 비어있습니다."),
+    UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "지원하지 않는 이미지 형식입니다. (JPEG, PNG, WebP만 허용)"),
+    IMAGE_FILE_TOO_LARGE(HttpStatus.BAD_REQUEST, "이미지 파일은 5MB를 초과할 수 없습니다."),
+    RESOURCE_IMAGE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "이미지 업로드에 실패했습니다."),
+    RESOURCE_IMAGE_DELETE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "이미지 삭제에 실패했습니다."),
+    RESOURCE_IMAGE_URL_GENERATION_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "이미지 URL 생성에 실패했습니다.");
 
     private final HttpStatus httpStatus;
     private final String message;

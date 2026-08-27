@@ -17,9 +17,19 @@ spring:
       host: ${REDIS_HOST}
       port: ${REDIS_PORT}
 
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+
 jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}
 
 websocket:
   allowed-origins: ${FRONTEND_ORIGIN:http://localhost:3000}
+
+aws:
+  region: ${AWS_REGION:ap-northeast-2}
+  s3:
+    resource-image-bucket: ${S3_RESOURCE_IMAGE_BUCKET:gymflow-resource-images}

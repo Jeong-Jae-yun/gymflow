@@ -597,6 +597,21 @@ Reservation은 Resource 하위에 별도의 Profile Entity를 두지 않고
 
 ---
 
+### Resource 대표 이미지 (imageKey)
+
+Resource는 모든 ResourceType(MACHINE/PT_ROOM/LOCKER/STRETCH_ZONE/SAUNA/SHOWER_ROOM)이 공통으로 사용할
+수 있는 대표 이미지 1장을 가질 수 있다. MachineProfile 등 특정 타입 전용 Entity를 두지 않고, Resource에
+`imageKey`(`VARCHAR(500)`, nullable) 컬럼으로 직접 관리한다.
+
+`imageKey`에는 S3 전체 URL이나 Presigned URL이 아니라 `resources/{resourceId}/{UUID}.{extension}` 형식의
+S3 Object Key만 저장한다(예: `resources/17/550e8400-e29b-41d4-a716-446655440000.webp`). URL은 DB에
+저장하지 않으며, 조회 시점마다 `imageKey`를 기반으로 1시간 유효한 Presigned GET URL을 새로 생성해
+`imageUrl`로 응답한다. `imageKey`가 `null`이면 `imageUrl`도 `null`이며, 이 경우 Frontend가 기본
+이미지를 표시한다. 이미지 업로드/교체/삭제는 `PUT /DELETE /api/admin/resources/{resourceId}/image`
+전용 API로만 이루어지며, Resource 생성/수정 API의 payload에는 이미지 관련 필드를 포함하지 않는다.
+
+---
+
 # 12. Future Expansion
 
 새로운 Resource 타입은 별도의 Profile Entity를 추가하는 방식이 아니라,

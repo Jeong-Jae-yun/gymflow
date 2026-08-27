@@ -193,6 +193,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 - Resource 상세 조회
 - 실시간 상태 조회
 - 예약 가능 시간 조회
+- Resource 대표 이미지 조회 (`imageUrl`, Private S3 + Presigned GET URL 1시간 유효, `imageKey`가 없으면 `null`)
 
 ---
 
@@ -247,6 +248,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 - 삭제 (물리 삭제 없이 INACTIVE 상태로 대체)
 - 점검 모드 (ACTIVE ↔ MAINTENANCE ↔ INACTIVE 상태 변경, 활성 예약/승급 제안이 있으면 차단)
 - 예약 제한
+- 대표 이미지 업로드/교체/삭제 (`PUT`/`DELETE /api/admin/resources/{resourceId}/image`, JPEG/PNG/WebP만 허용, 최대 5MB, AWS SDK Default Credentials Provider Chain으로 EC2에서는 IAM Role(`GymFlowEC2Role`)을 통해 인증하며 Access Key를 코드/설정에 두지 않는다)
 
 ---
 

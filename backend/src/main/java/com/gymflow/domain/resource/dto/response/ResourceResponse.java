@@ -9,6 +9,7 @@ public record ResourceResponse(
         ResourceType resourceType,
         ResourceStatus status,
         Integer capacity,
-        ReservationPolicySummaryResponse reservationPolicy
+        ReservationPolicySummaryResponse reservationPolicy,
+        String imageUrl
 ) {
 }

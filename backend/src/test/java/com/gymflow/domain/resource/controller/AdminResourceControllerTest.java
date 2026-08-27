@@ -3,6 +3,8 @@ package com.gymflow.domain.resource.controller;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.resource.dto.response.AdminResourceResponse;
+import com.gymflow.domain.resource.dto.response.ResourceImageResponse;
+import com.gymflow.domain.resource.service.AdminResourceImageService;
 import com.gymflow.domain.resource.service.AdminResourceService;
 import com.gymflow.domain.usagehistory.dto.response.AdminResourceUsageStatisticsResponse;
 import com.gymflow.domain.usagehistory.service.UsageHistoryService;
@@ -13,7 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
@@ -25,7 +29,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -46,12 +52,15 @@ class AdminResourceControllerTest {
     private AdminResourceService adminResourceService;
 
     @MockitoBean
+    private AdminResourceImageService adminResourceImageService;
+
+    @MockitoBean
     private UsageHistoryService usageHistoryService;
 
     private AdminResourceResponse sampleResponse() {
         return new AdminResourceResponse(
                 10L, "Chest Press A-1", ResourceType.MACHINE, ResourceStatus.ACTIVE, 1, "3F Weight Zone",
-                15, 15, 60, LocalDateTime.now(), LocalDateTime.now());
+                15, 15, 60, null, LocalDateTime.now(), LocalDateTime.now());
     }
 
     @Test
@@ -255,6 +264,92 @@ class AdminResourceControllerTest {
         mockMvc.perform(patch("/api/admin/resources/{resourceId}/status", 999L)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("status", "MAINTENANCE"))))
+                .andExpect(status().isNotFound());
+    }
+
+    // ===== 대표 이미지 =====
+
+    @Test
+    @DisplayName("이미지를 업로드하면 200 OK와 resourceId/imageUrl을 반환한다")
+    void uploadImage_WithValidFile_ShouldReturnOkWithImageUrl() throws Exception {
+        // given
+        MockMultipartFile file = new MockMultipartFile("file", "photo.jpg", "image/jpeg", "dummy".getBytes());
+        when(adminResourceImageService.uploadImage(eq(10L), any()))
+                .thenReturn(new ResourceImageResponse(10L, "https://signed.example.com/resources/10/key.jpg"));
+
+        // when & then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/admin/resources/{resourceId}/image", 10L).file(file))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resourceId").value(10L))
+                .andExpect(jsonPath("$.imageUrl").value("https://signed.example.com/resources/10/key.jpg"));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 Resource에 이미지를 업로드하면 404 Not Found를 반환한다")
+    void uploadImage_WithNonExistentResource_ShouldReturnNotFound() throws Exception {
+        // given
+        MockMultipartFile file = new MockMultipartFile("file", "photo.jpg", "image/jpeg", "dummy".getBytes());
+        when(adminResourceImageService.uploadImage(eq(999L), any()))
+                .thenThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        // when & then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/admin/resources/{resourceId}/image", 999L).file(file))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("지원하지 않는 이미지 형식이면 400 Bad Request를 반환한다")
+    void uploadImage_WithUnsupportedType_ShouldReturnBadRequest() throws Exception {
+        // given
+        MockMultipartFile file = new MockMultipartFile("file", "photo.gif", "image/gif", "dummy".getBytes());
+        when(adminResourceImageService.uploadImage(eq(10L), any()))
+                .thenThrow(new BusinessException(ErrorCode.UNSUPPORTED_IMAGE_TYPE));
+
+        // when & then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/admin/resources/{resourceId}/image", 10L).file(file))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorCode.UNSUPPORTED_IMAGE_TYPE.getMessage()));
+    }
+
+    @Test
+    @DisplayName("5MB를 초과하는 이미지는 400 Bad Request를 반환한다")
+    void uploadImage_WithFileTooLarge_ShouldReturnBadRequest() throws Exception {
+        // given
+        MockMultipartFile file = new MockMultipartFile("file", "photo.jpg", "image/jpeg", "dummy".getBytes());
+        when(adminResourceImageService.uploadImage(eq(10L), any()))
+                .thenThrow(new BusinessException(ErrorCode.IMAGE_FILE_TOO_LARGE));
+
+        // when & then
+        mockMvc.perform(multipart(HttpMethod.PUT, "/api/admin/resources/{resourceId}/image", 10L).file(file))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(ErrorCode.IMAGE_FILE_TOO_LARGE.getMessage()));
+    }
+
+    @Test
+    @DisplayName("이미지를 삭제하면 204 No Content를 반환한다")
+    void deleteImage_WithExistingResource_ShouldReturnNoContent() throws Exception {
+        // when & then
+        mockMvc.perform(delete("/api/admin/resources/{resourceId}/image", 10L))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @DisplayName("이미지가 없는 상태에서 삭제를 요청해도 204 No Content를 반환한다 (멱등)")
+    void deleteImage_WithoutExistingImage_ShouldReturnNoContentIdempotently() throws Exception {
+        // when & then: Service가 멱등하게 성공 처리하므로 Controller는 항상 204를 반환한다
+        mockMvc.perform(delete("/api/admin/resources/{resourceId}/image", 10L))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 Resource의 이미지를 삭제하면 404 Not Found를 반환한다")
+    void deleteImage_WithNonExistentResource_ShouldReturnNotFound() throws Exception {
+        // given
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND))
+                .when(adminResourceImageService).deleteImage(999L);
+
+        // when & then
+        mockMvc.perform(delete("/api/admin/resources/{resourceId}/image", 999L))
                 .andExpect(status().isNotFound());
     }
 

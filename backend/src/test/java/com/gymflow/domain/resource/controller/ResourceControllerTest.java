@@ -48,7 +48,8 @@ class ResourceControllerTest {
                 ResourceType.MACHINE,
                 ResourceStatus.ACTIVE,
                 1,
-                new ReservationPolicySummaryResponse(15, 15, 60)
+                new ReservationPolicySummaryResponse(15, 15, 60),
+                "https://gymflow-resource-images.s3.ap-northeast-2.amazonaws.com/resources/10/sample.jpg"
         );
     }
 
@@ -79,7 +80,8 @@ class ResourceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(10L))
                 .andExpect(jsonPath("$.name").value("Chest Press A-1"))
-                .andExpect(jsonPath("$.status").value("ACTIVE"));
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.imageUrl").value(sampleResponse().imageUrl()));
     }
 
     @Test

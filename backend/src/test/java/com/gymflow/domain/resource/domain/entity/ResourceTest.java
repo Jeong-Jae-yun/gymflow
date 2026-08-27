@@ -185,4 +185,103 @@ class ResourceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("status");
     }
+
+    @Test
+    @DisplayName("생성 직후 Resource의 imageKey는 null이다")
+    void createResource_ShouldHaveNullImageKeyByDefault() {
+        // when
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // then
+        assertThat(resource.getImageKey()).isNull();
+    }
+
+    @Test
+    @DisplayName("changeImageKey()는 imageKey를 지정한 값으로 변경한다")
+    void changeImageKey_ShouldSetImageKey() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when
+        resource.changeImageKey("resources/1/550e8400-e29b-41d4-a716-446655440000.webp");
+
+        // then
+        assertThat(resource.getImageKey()).isEqualTo("resources/1/550e8400-e29b-41d4-a716-446655440000.webp");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   "})
+    @DisplayName("changeImageKey()에 빈 값/공백을 전달하면 예외가 발생한다")
+    void changeImageKey_WithBlank_ShouldThrowException(String blank) {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> resource.changeImageKey(blank))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("imageKey");
+    }
+
+    @Test
+    @DisplayName("changeImageKey()에 null을 전달하면 예외가 발생한다")
+    void changeImageKey_WithNull_ShouldThrowException() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> resource.changeImageKey(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("imageKey");
+    }
+
+    @Test
+    @DisplayName("removeImageKey()는 imageKey를 null로 되돌린다")
+    void removeImageKey_ShouldClearImageKey() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+        resource.changeImageKey("resources/1/550e8400-e29b-41d4-a716-446655440000.webp");
+
+        // when
+        resource.removeImageKey();
+
+        // then
+        assertThat(resource.getImageKey()).isNull();
+    }
+
+    @Test
+    @DisplayName("imageKey가 없는 상태에서 removeImageKey()를 호출해도 예외 없이 null을 유지한다")
+    void removeImageKey_WithoutExistingImageKey_ShouldRemainNull() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+
+        // when
+        resource.removeImageKey();
+
+        // then
+        assertThat(resource.getImageKey()).isNull();
+    }
 }

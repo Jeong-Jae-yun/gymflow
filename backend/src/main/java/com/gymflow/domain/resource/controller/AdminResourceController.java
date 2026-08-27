@@ -4,6 +4,8 @@ import com.gymflow.domain.resource.dto.request.AdminResourceCreateRequest;
 import com.gymflow.domain.resource.dto.request.AdminResourceStatusUpdateRequest;
 import com.gymflow.domain.resource.dto.request.AdminResourceUpdateRequest;
 import com.gymflow.domain.resource.dto.response.AdminResourceResponse;
+import com.gymflow.domain.resource.dto.response.ResourceImageResponse;
+import com.gymflow.domain.resource.service.AdminResourceImageService;
 import com.gymflow.domain.resource.service.AdminResourceService;
 import com.gymflow.domain.usagehistory.dto.response.AdminResourceUsageStatisticsResponse;
 import com.gymflow.domain.usagehistory.service.UsageHistoryService;
@@ -11,6 +13,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,7 +22,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 
@@ -29,6 +34,7 @@ import java.time.LocalDateTime;
 public class AdminResourceController {
 
     private final AdminResourceService adminResourceService;
+    private final AdminResourceImageService adminResourceImageService;
     private final UsageHistoryService usageHistoryService;
 
     @PostMapping
@@ -49,6 +55,19 @@ public class AdminResourceController {
             @PathVariable Long resourceId, @Valid @RequestBody AdminResourceStatusUpdateRequest request) {
         AdminResourceResponse response = adminResourceService.changeStatus(resourceId, request);
         return ResponseEntity.ok(response);
+    }
+
+    @PutMapping("/{resourceId}/image")
+    public ResponseEntity<ResourceImageResponse> uploadImage(
+            @PathVariable Long resourceId, @RequestPart("file") MultipartFile file) {
+        ResourceImageResponse response = adminResourceImageService.uploadImage(resourceId, file);
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{resourceId}/image")
+    public ResponseEntity<Void> deleteImage(@PathVariable Long resourceId) {
+        adminResourceImageService.deleteImage(resourceId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{resourceId}/statistics")

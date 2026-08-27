@@ -9,6 +9,7 @@ import com.gymflow.domain.resource.domain.enumtype.ResourceType;
 import com.gymflow.domain.resource.domain.redis.ResourceAvailabilityLockRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.resource.domain.storage.ResourceImageStorage;
 import com.gymflow.domain.resource.dto.request.AdminResourceCreateRequest;
 import com.gymflow.domain.resource.dto.request.AdminResourceStatusUpdateRequest;
 import com.gymflow.domain.resource.dto.request.AdminResourceUpdateRequest;
@@ -63,6 +64,9 @@ class AdminResourceServiceTest {
 
     @Mock
     private TransactionAwareLockReleaser lockReleaser;
+
+    @Mock
+    private ResourceImageStorage resourceImageStorage;
 
     @InjectMocks
     private AdminResourceService adminResourceService;
@@ -234,6 +238,37 @@ class AdminResourceServiceTest {
         // then
         assertThat(response.type()).isEqualTo(ResourceType.MACHINE);
         assertThat(response.status()).isEqualTo(ResourceStatus.MAINTENANCE);
+    }
+
+    @Test
+    @DisplayName("imageKey가 있는 Resource를 수정하면 응답의 imageUrl에 Presigned URL이 resolve된다")
+    void updateResource_WithExistingImageKey_ShouldResolveImageUrl() {
+        // given
+        Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
+        resource.changeImageKey("resources/10/sample.jpg");
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceImageStorage.generateReadUrl("resources/10/sample.jpg")).thenReturn("https://signed/sample.jpg");
+
+        // when
+        AdminResourceResponse response = adminResourceService.updateResource(RESOURCE_ID, updateRequest());
+
+        // then
+        assertThat(response.imageUrl()).isEqualTo("https://signed/sample.jpg");
+    }
+
+    @Test
+    @DisplayName("imageKey가 없는 Resource를 수정하면 응답의 imageUrl은 null이며 Presigned URL을 생성하지 않는다")
+    void updateResource_WithoutImageKey_ShouldReturnNullImageUrl() {
+        // given
+        Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when
+        AdminResourceResponse response = adminResourceService.updateResource(RESOURCE_ID, updateRequest());
+
+        // then
+        assertThat(response.imageUrl()).isNull();
+        verify(resourceImageStorage, never()).generateReadUrl(any());
     }
 
     @Test

@@ -95,4 +95,36 @@ class ResourceRepositoryTest {
         // then
         assertThat(found).isEmpty();
     }
+
+    @Test
+    @DisplayName("imageKey는 설정한 값 그대로 영속화되고 재조회 시 유지된다")
+    void save_WithImageKey_ShouldPersistAndReloadImageKey() {
+        // given
+        Resource resource = persistResource("Chest Press A-1");
+        resource.changeImageKey("resources/" + resource.getId() + "/550e8400-e29b-41d4-a716-446655440000.webp");
+        entityManager.flush();
+        entityManager.clear();
+
+        // when
+        Resource reloaded = resourceRepository.findById(resource.getId()).orElseThrow();
+
+        // then
+        assertThat(reloaded.getImageKey())
+                .isEqualTo("resources/" + resource.getId() + "/550e8400-e29b-41d4-a716-446655440000.webp");
+    }
+
+    @Test
+    @DisplayName("imageKey를 설정하지 않은 Resource는 null로 영속화된다")
+    void save_WithoutImageKey_ShouldPersistAsNull() {
+        // given
+        Resource resource = persistResource("Chest Press A-1");
+        entityManager.flush();
+        entityManager.clear();
+
+        // when
+        Resource reloaded = resourceRepository.findById(resource.getId()).orElseThrow();
+
+        // then
+        assertThat(reloaded.getImageKey()).isNull();
+    }
 }

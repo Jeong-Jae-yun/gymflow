@@ -9,7 +9,7 @@ public final class AdminResourceMapper {
     private AdminResourceMapper() {
     }
 
-    public static AdminResourceResponse toResponse(Resource resource) {
+    public static AdminResourceResponse toResponse(Resource resource, String imageUrl) {
         ReservationPolicy policy = resource.getReservationPolicy();
         return new AdminResourceResponse(
                 resource.getId(),
@@ -21,6 +21,7 @@ public final class AdminResourceMapper {
                 policy != null ? policy.getSlotDuration() : null,
                 policy != null ? policy.getMinDuration() : null,
                 policy != null ? policy.getMaxDuration() : null,
+                imageUrl,
                 resource.getCreatedAt(),
                 resource.getUpdatedAt()
         );

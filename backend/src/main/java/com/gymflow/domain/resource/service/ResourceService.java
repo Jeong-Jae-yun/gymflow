@@ -6,6 +6,7 @@ import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository.RankedResource;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
+import com.gymflow.domain.resource.domain.storage.ResourceImageStorage;
 import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
 import com.gymflow.domain.resource.dto.response.ResourceRankingResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
@@ -40,10 +41,11 @@ public class ResourceService {
     private final ResourceRepository resourceRepository;
     private final ResourceCacheRepository resourceCacheRepository;
     private final ResourceRankingRedisRepository resourceRankingRedisRepository;
+    private final ResourceImageStorage resourceImageStorage;
 
     public Page<ResourceResponse> getResources(Pageable pageable) {
         return resourceRepository.findAll(pageable)
-                .map(ResourceMapper::toResponse);
+                .map(resource -> ResourceMapper.toResponse(resource, resolveImageUrl(resource.getImageKey())));
     }
 
     public ResourceResponse getResourceDetail(Long resourceId) {
@@ -57,10 +59,14 @@ public class ResourceService {
         Resource resource = resourceRepository.findWithReservationPolicyById(resourceId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
 
-        ResourceResponse response = ResourceMapper.toResponse(resource);
+        ResourceResponse response = ResourceMapper.toResponse(resource, resolveImageUrl(resource.getImageKey()));
         putToCache(resourceId, response);
 
         return response;
+    }
+
+    private String resolveImageUrl(String imageKey) {
+        return imageKey == null ? null : resourceImageStorage.generateReadUrl(imageKey);
     }
 
     private Optional<ResourceResponse> getFromCache(Long resourceId) {
