@@ -182,7 +182,12 @@ class PromotionProcessorTest {
         assertThat(captor.getValue().getUser()).isSameAs(candidateUser);
         assertThat(captor.getValue().getStatus()).isEqualTo(PromotionStatus.OFFERED);
         verify(waitingQueueRedisRepository).remove(WAITING_QUEUE_ID, RESOURCE_ID, START_AT);
-        verify(waitingQueueEventPublisher).publish(any(WaitingQueuePromotedEvent.class));
+        ArgumentCaptor<WaitingQueuePromotedEvent> eventCaptor = ArgumentCaptor.forClass(WaitingQueuePromotedEvent.class);
+        verify(waitingQueueEventPublisher).publish(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().promotionId())
+                .isEqualTo(PROMOTION_ID)
+                .isEqualTo(captor.getValue().getId());
+        assertThat(eventCaptor.getValue().waitingQueueId()).isEqualTo(WAITING_QUEUE_ID);
         verify(promotionLockRepository).unlock(eq(RESOURCE_ID), eq(START_AT), eq(endAt), eq("lock-token"));
     }
 

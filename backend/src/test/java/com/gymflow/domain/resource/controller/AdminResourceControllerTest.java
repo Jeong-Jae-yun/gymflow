@@ -63,6 +63,56 @@ class AdminResourceControllerTest {
                 15, 15, 60, null, LocalDateTime.now(), LocalDateTime.now());
     }
 
+    // ===== 단건 조회 =====
+
+    @Test
+    @DisplayName("Resource 단건 조회는 200 OK와 AdminResourceResponse의 전체 필드를 반환한다")
+    void getResource_WithExistingResource_ShouldReturnOk() throws Exception {
+        // given
+        when(adminResourceService.getResource(10L)).thenReturn(sampleResponse());
+
+        // when & then
+        mockMvc.perform(get("/api/admin/resources/{resourceId}", 10L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(10L))
+                .andExpect(jsonPath("$.name").value("Chest Press A-1"))
+                .andExpect(jsonPath("$.type").value("MACHINE"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.capacity").value(1))
+                .andExpect(jsonPath("$.description").value("3F Weight Zone"))
+                .andExpect(jsonPath("$.slotDuration").value(15))
+                .andExpect(jsonPath("$.minDuration").value(15))
+                .andExpect(jsonPath("$.maxDuration").value(60));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 Resource를 단건 조회하면 404 Not Found를 반환한다")
+    void getResource_WithNonExistentResource_ShouldReturnNotFound() throws Exception {
+        // given
+        when(adminResourceService.getResource(999L))
+                .thenThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        // when & then
+        mockMvc.perform(get("/api/admin/resources/{resourceId}", 999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(ErrorCode.RESOURCE_NOT_FOUND.getMessage()));
+    }
+
+    @Test
+    @DisplayName("Resource 단건 조회는 imageKey가 없으면 imageUrl을 null로 반환한다")
+    void getResource_WithoutImage_ShouldReturnNullImageUrl() throws Exception {
+        // given
+        AdminResourceResponse responseWithoutImage = new AdminResourceResponse(
+                10L, "Chest Press A-1", ResourceType.MACHINE, ResourceStatus.ACTIVE, 1, "3F Weight Zone",
+                15, 15, 60, null, LocalDateTime.now(), LocalDateTime.now());
+        when(adminResourceService.getResource(10L)).thenReturn(responseWithoutImage);
+
+        // when & then
+        mockMvc.perform(get("/api/admin/resources/{resourceId}", 10L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imageUrl").doesNotExist());
+    }
+
     @Test
     @DisplayName("유효한 요청으로 Resource를 생성하면 201 Created와 응답 본문을 반환한다")
     void create_WithValidRequest_ShouldReturnCreated() throws Exception {

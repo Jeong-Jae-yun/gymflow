@@ -98,6 +98,73 @@ class AdminResourceServiceTest {
         return new AdminResourceUpdateRequest("Chest Press A-2", 2, "4F Weight Zone", 30, 30, 90);
     }
 
+    // ===== 단건 조회 =====
+
+    @Test
+    @DisplayName("존재하는 Resource를 조회하면 AdminResourceResponse의 전체 필드를 반환한다")
+    void getResource_WithExistingResource_ShouldReturnFullResponse() {
+        // given
+        Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when
+        AdminResourceResponse response = adminResourceService.getResource(RESOURCE_ID);
+
+        // then
+        assertThat(response.id()).isEqualTo(RESOURCE_ID);
+        assertThat(response.name()).isEqualTo("Chest Press A-1");
+        assertThat(response.type()).isEqualTo(ResourceType.MACHINE);
+        assertThat(response.status()).isEqualTo(ResourceStatus.ACTIVE);
+        assertThat(response.capacity()).isEqualTo(1);
+        assertThat(response.description()).isEqualTo("3F Weight Zone");
+        assertThat(response.slotDuration()).isEqualTo(15);
+        assertThat(response.minDuration()).isEqualTo(15);
+        assertThat(response.maxDuration()).isEqualTo(60);
+        verify(resourceImageStorage, never()).generateReadUrl(any());
+    }
+
+    @Test
+    @DisplayName("imageKey가 있는 Resource를 조회하면 Presigned URL을 생성해 imageUrl로 반환한다")
+    void getResource_WithImageKey_ShouldResolveImageUrl() {
+        // given
+        Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
+        resource.changeImageKey("resources/10/sample.jpg");
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(resourceImageStorage.generateReadUrl("resources/10/sample.jpg")).thenReturn("https://signed/sample.jpg");
+
+        // when
+        AdminResourceResponse response = adminResourceService.getResource(RESOURCE_ID);
+
+        // then
+        assertThat(response.imageUrl()).isEqualTo("https://signed/sample.jpg");
+    }
+
+    @Test
+    @DisplayName("imageKey가 없는 Resource를 조회하면 imageUrl은 null이다")
+    void getResource_WithoutImageKey_ShouldReturnNullImageUrl() {
+        // given
+        Resource resource = resourceWithId(RESOURCE_ID, ResourceStatus.ACTIVE);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when
+        AdminResourceResponse response = adminResourceService.getResource(RESOURCE_ID);
+
+        // then
+        assertThat(response.imageUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 Resource를 조회하면 RESOURCE_NOT_FOUND 예외가 발생한다")
+    void getResource_WithNonExistentResource_ShouldThrowException() {
+        // given
+        when(resourceRepository.findWithReservationPolicyById(999L)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> adminResourceService.getResource(999L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
     // ===== 생성 =====
 
     @Test

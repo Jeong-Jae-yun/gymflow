@@ -52,7 +52,7 @@ class WaitingQueueEventPubSubIntegrationTest {
     void publish_ShouldBeReceivedByRealSubscriberOverRedis() {
         // given
         WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(
-                10L, 3L, 101L,
+                500L, 10L, 3L, 101L,
                 LocalDateTime.of(2026, 8, 20, 14, 0),
                 LocalDateTime.of(2026, 8, 20, 14, 15),
                 LocalDateTime.now());

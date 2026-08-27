@@ -156,6 +156,41 @@ class WaitingQueuePromotionRepositoryTest {
     }
 
     @Test
+    @DisplayName("findByWaitingQueueId는 연결된 Promotion의 실제 PK를 조회한다")
+    void findByWaitingQueueId_WithExistingPromotion_ShouldReturnPromotion() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion saved = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+        entityManager.clear();
+
+        // when
+        Optional<WaitingQueuePromotion> found = promotionRepository.findByWaitingQueueId(waitingQueue.getId());
+
+        // then
+        assertThat(found).isPresent();
+        assertThat(found.get().getId()).isEqualTo(saved.getId());
+    }
+
+    @Test
+    @DisplayName("findByWaitingQueueId는 Promotion이 없는 WaitingQueue에 대해 빈 값을 반환한다")
+    void findByWaitingQueueId_WithoutPromotion_ShouldReturnEmpty() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        entityManager.flush();
+
+        // when
+        Optional<WaitingQueuePromotion> found = promotionRepository.findByWaitingQueueId(waitingQueue.getId());
+
+        // then
+        assertThat(found).isEmpty();
+    }
+
+    @Test
     @DisplayName("findByResourceIdAndStartAtAndEndAtAndStatus는 활성 OFFERED Promotion을 조회한다")
     void findByResourceIdAndStartAtAndEndAtAndStatus_WithActiveOffer_ShouldReturnPromotion() {
         // given

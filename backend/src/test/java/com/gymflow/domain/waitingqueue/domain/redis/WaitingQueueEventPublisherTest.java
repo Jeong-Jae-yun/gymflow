@@ -40,7 +40,7 @@ class WaitingQueueEventPublisherTest {
     @DisplayName("승급 이벤트를 gymflow:event:waiting-queue Channel로 JSON 직렬화하여 발행한다")
     void publish_ShouldSendSerializedJsonToWaitingQueueEventChannel() {
         // given
-        WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(10L, 3L, 101L, START_AT, END_AT, PROMOTED_AT);
+        WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(500L, 10L, 3L, 101L, START_AT, END_AT, PROMOTED_AT);
 
         // when
         waitingQueueEventPublisher.publish(event);
@@ -53,6 +53,7 @@ class WaitingQueueEventPublisherTest {
         assertThat(channelCaptor.getValue()).isEqualTo(WaitingQueueEventChannel.WAITING_QUEUE_EVENT);
 
         String payload = payloadCaptor.getValue();
+        assertThat(payload).contains("\"promotionId\":500");
         assertThat(payload).contains("\"waitingQueueId\":10");
         assertThat(payload).contains("\"userId\":3");
         assertThat(payload).contains("\"resourceId\":101");
@@ -68,8 +69,8 @@ class WaitingQueueEventPublisherTest {
     @DisplayName("서로 다른 이벤트는 서로 다른 JSON payload로 직렬화되어 발행된다")
     void publish_WithDifferentEvents_ShouldSendDifferentPayloads() {
         // given
-        WaitingQueuePromotedEvent first = new WaitingQueuePromotedEvent(1L, 1L, 1L, START_AT, END_AT, PROMOTED_AT);
-        WaitingQueuePromotedEvent second = new WaitingQueuePromotedEvent(2L, 2L, 2L, START_AT, END_AT, PROMOTED_AT);
+        WaitingQueuePromotedEvent first = new WaitingQueuePromotedEvent(900L, 1L, 1L, 1L, START_AT, END_AT, PROMOTED_AT);
+        WaitingQueuePromotedEvent second = new WaitingQueuePromotedEvent(901L, 2L, 2L, 2L, START_AT, END_AT, PROMOTED_AT);
 
         // when
         waitingQueueEventPublisher.publish(first);

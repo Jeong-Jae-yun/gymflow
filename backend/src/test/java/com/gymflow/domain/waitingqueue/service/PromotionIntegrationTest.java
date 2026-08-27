@@ -19,6 +19,8 @@ import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueuePromotion;
 import com.gymflow.domain.waitingqueue.domain.enumtype.PromotionStatus;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueEventPublisher;
+import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueuePromotedEvent;
 import com.gymflow.domain.waitingqueue.domain.repository.WaitingQueuePromotionRepository;
 import com.gymflow.domain.waitingqueue.dto.request.WaitingQueueCreateRequest;
 import com.gymflow.domain.waitingqueue.dto.response.PromotionAcceptResponse;
@@ -27,17 +29,20 @@ import com.gymflow.global.common.exception.ErrorCode;
 import com.gymflow.global.security.principal.CustomUserDetails;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 
 /**
  * 실제 Testcontainers MySQL/Redis + 실제 Spring 컨텍스트를 사용해
@@ -71,6 +76,9 @@ class PromotionIntegrationTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @MockitoSpyBean
+    private WaitingQueueEventPublisher waitingQueueEventPublisher;
 
     private Long persistUser(String email) {
         return userRepository.save(User.builder()
@@ -145,6 +153,50 @@ class PromotionIntegrationTest {
         assertThat(newReservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
         assertThat(newReservation.getStartAt()).isEqualTo(startAt);
         assertThat(newReservation.getEndAt()).isEqualTo(endAt);
+    }
+
+    @Test
+    @DisplayName("실제로 발행된 WaitingQueuePromotedEvent의 promotionId는 저장된 Promotion의 실제 PK와 일치하며, 그 값으로 accept를 호출할 수 있다")
+    void noShow_PublishedEventPromotionId_ShouldMatchPersistedPromotionAndBeUsableForAccept() {
+        // given: A가 리소스를 예약하고, B가 같은 시간대에 대기열로 등록한다
+        Long resourceId = persistResourceWithPolicy("Promotion Event E2E Resource " + System.nanoTime());
+        Long userAId = persistUser("promotion-event-e2e-user-a-" + System.nanoTime() + "@gymflow.com");
+        Long userBId = persistUser("promotion-event-e2e-user-b-" + System.nanoTime() + "@gymflow.com");
+        LocalDateTime startAt = LocalDateTime.now().minusMinutes(1).withSecond(0).withNano(0);
+        LocalDateTime endAt = startAt.plusMinutes(15);
+
+        authenticateAs(userAId);
+        ReservationResponse createdByA =
+                reservationService.createReservation(new ReservationCreateRequest(resourceId, startAt, 15));
+        SecurityContextHolder.clearContext();
+
+        authenticateAs(userBId);
+        waitingQueueService.registerWaitingQueue(new WaitingQueueCreateRequest(resourceId, startAt, endAt));
+        SecurityContextHolder.clearContext();
+
+        // when: A의 예약이 NO_SHOW 처리되어 B가 자동 승급되고, WaitingQueuePromotedEvent가 실제로 발행된다
+        reservationService.noShow(createdByA.reservationId());
+
+        // then: 실제 발행된 이벤트의 promotionId는 임의 값이 아니라 저장된 Promotion의 실제 PK다
+        ArgumentCaptor<WaitingQueuePromotedEvent> eventCaptor = ArgumentCaptor.forClass(WaitingQueuePromotedEvent.class);
+        verify(waitingQueueEventPublisher).publish(eventCaptor.capture());
+        WaitingQueuePromotedEvent publishedEvent = eventCaptor.getValue();
+
+        WaitingQueuePromotion promotion = promotionRepository
+                .findByResourceIdAndStartAtAndEndAtAndStatus(resourceId, startAt, endAt, PromotionStatus.OFFERED)
+                .orElseThrow();
+        assertThat(publishedEvent.promotionId()).isEqualTo(promotion.getId());
+        assertThat(publishedEvent.userId()).isEqualTo(userBId);
+
+        // and: 프론트엔드가 WebSocket payload에서 얻는 것과 동일한 promotionId만으로 accept를 호출할 수 있다
+        authenticateAs(userBId);
+        PromotionAcceptResponse acceptResponse = promotionService.accept(publishedEvent.promotionId());
+        SecurityContextHolder.clearContext();
+
+        assertThat(acceptResponse.promotionStatus()).isEqualTo(PromotionStatus.ACCEPTED);
+        Reservation newReservation = reservationRepository.findById(acceptResponse.reservationId()).orElseThrow();
+        assertThat(newReservation.getUser().getId()).isEqualTo(userBId);
+        assertThat(newReservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
     }
 
     @Test

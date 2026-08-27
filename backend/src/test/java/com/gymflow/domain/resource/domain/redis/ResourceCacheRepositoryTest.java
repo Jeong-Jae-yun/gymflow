@@ -45,6 +45,7 @@ class ResourceCacheRepositoryTest {
     private ResourceResponse sampleResponse() {
         return new ResourceResponse(
                 RESOURCE_ID, "랫풀다운", ResourceType.MACHINE, ResourceStatus.ACTIVE, 1,
+                "3F Weight Zone",
                 new ReservationPolicySummaryResponse(15, 15, 25),
                 "https://gymflow-resource-images.s3.ap-northeast-2.amazonaws.com/resources/101/sample.jpg");
     }

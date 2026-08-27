@@ -53,7 +53,8 @@ class WaitingQueueControllerTest {
                 LocalDateTime.of(2026, 8, 12, 14, 15),
                 WaitingQueueStatus.WAITING,
                 LocalDateTime.of(2026, 8, 12, 10, 0),
-                2L
+                2L,
+                null
         );
     }
 
@@ -144,7 +145,32 @@ class WaitingQueueControllerTest {
                 .andExpect(jsonPath("$.content[0].waitingQueueId").value(100L))
                 .andExpect(jsonPath("$.content[0].resourceId").value(10L))
                 .andExpect(jsonPath("$.content[0].status").value("WAITING"))
+                .andExpect(jsonPath("$.content[0].promotionId").doesNotExist())
                 .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    @DisplayName("PROMOTED 상태의 대기열 조회는 promotionId를 함께 반환한다")
+    void getMyWaitingQueues_WithPromotedEntry_ShouldReturnPromotionId() throws Exception {
+        // given
+        WaitingQueueResponse promotedResponse = new WaitingQueueResponse(
+                100L,
+                10L,
+                LocalDateTime.of(2026, 8, 12, 14, 0),
+                LocalDateTime.of(2026, 8, 12, 14, 15),
+                WaitingQueueStatus.PROMOTED,
+                LocalDateTime.of(2026, 8, 12, 10, 0),
+                null,
+                501L
+        );
+        when(waitingQueueService.getMyWaitingQueues(any()))
+                .thenReturn(new PageImpl<>(List.of(promotedResponse), PageRequest.of(0, 20), 1));
+
+        // when & then
+        mockMvc.perform(get("/api/waiting-queues"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].status").value("PROMOTED"))
+                .andExpect(jsonPath("$.content[0].promotionId").value(501L));
     }
 
     @Test

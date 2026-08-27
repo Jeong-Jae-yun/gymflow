@@ -48,6 +48,7 @@ class ResourceControllerTest {
                 ResourceType.MACHINE,
                 ResourceStatus.ACTIVE,
                 1,
+                "3F Weight Zone",
                 new ReservationPolicySummaryResponse(15, 15, 60),
                 "https://gymflow-resource-images.s3.ap-northeast-2.amazonaws.com/resources/10/sample.jpg"
         );
@@ -65,6 +66,7 @@ class ResourceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].id").value(10L))
                 .andExpect(jsonPath("$.content[0].resourceType").value("MACHINE"))
+                .andExpect(jsonPath("$.content[0].description").value("3F Weight Zone"))
                 .andExpect(jsonPath("$.content[0].reservationPolicy.maxDuration").value(60))
                 .andExpect(jsonPath("$.totalElements").value(1));
     }
@@ -81,7 +83,30 @@ class ResourceControllerTest {
                 .andExpect(jsonPath("$.id").value(10L))
                 .andExpect(jsonPath("$.name").value("Chest Press A-1"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.description").value("3F Weight Zone"))
                 .andExpect(jsonPath("$.imageUrl").value(sampleResponse().imageUrl()));
+    }
+
+    @Test
+    @DisplayName("description이 없는 Resource 상세 조회는 description 필드를 null로 응답한다")
+    void getResourceDetail_WithoutDescription_ShouldReturnNullDescription() throws Exception {
+        // given
+        ResourceResponse responseWithoutDescription = new ResourceResponse(
+                10L,
+                "Chest Press A-1",
+                ResourceType.MACHINE,
+                ResourceStatus.ACTIVE,
+                1,
+                null,
+                new ReservationPolicySummaryResponse(15, 15, 60),
+                null
+        );
+        when(resourceService.getResourceDetail(10L)).thenReturn(responseWithoutDescription);
+
+        // when & then
+        mockMvc.perform(get("/api/resources/{resourceId}", 10L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.description").doesNotExist());
     }
 
     @Test

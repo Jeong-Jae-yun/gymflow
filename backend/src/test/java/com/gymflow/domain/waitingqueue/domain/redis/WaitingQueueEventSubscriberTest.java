@@ -49,7 +49,7 @@ class WaitingQueueEventSubscriberTest {
 
     private WaitingQueuePromotedEvent sampleEvent() {
         return new WaitingQueuePromotedEvent(
-                10L, 3L, 101L,
+                500L, 10L, 3L, 101L,
                 LocalDateTime.of(2026, 8, 20, 14, 0),
                 LocalDateTime.of(2026, 8, 20, 14, 15),
                 LocalDateTime.of(2026, 8, 20, 13, 58));
@@ -76,6 +76,7 @@ class WaitingQueueEventSubscriberTest {
         assertThat(destinationCaptor.getValue()).isEqualTo(WaitingQueueDestination.WAITING_QUEUE_QUEUE);
         assertThat(destinationCaptor.getValue()).isEqualTo("/queue/waiting-queue");
         assertThat(payloadCaptor.getValue()).isEqualTo(event);
+        assertThat(((WaitingQueuePromotedEvent) payloadCaptor.getValue()).promotionId()).isEqualTo(500L);
     }
 
     @Test

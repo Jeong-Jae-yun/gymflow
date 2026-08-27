@@ -115,6 +115,7 @@ class ResourceServiceTest {
         assertThat(response.getContent()).hasSize(1);
         assertThat(response.getContent().get(0).id()).isEqualTo(RESOURCE_ID);
         assertThat(response.getContent().get(0).resourceType()).isEqualTo(ResourceType.MACHINE);
+        assertThat(response.getContent().get(0).description()).isEqualTo("3F Weight Zone");
         assertThat(response.getContent().get(0).reservationPolicy().maxDuration()).isEqualTo(60);
     }
 
@@ -166,10 +167,30 @@ class ResourceServiceTest {
         assertThat(response.id()).isEqualTo(RESOURCE_ID);
         assertThat(response.name()).isEqualTo("Chest Press A-1");
         assertThat(response.capacity()).isEqualTo(1);
+        assertThat(response.description()).isEqualTo("3F Weight Zone");
         assertThat(response.reservationPolicy().slotDuration()).isEqualTo(15);
         verify(resourceCacheRepository).get(RESOURCE_ID);
         verify(resourceRepository).findWithReservationPolicyById(RESOURCE_ID);
         verify(resourceCacheRepository).set(eq(RESOURCE_ID), any(ResourceResponse.class), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("description이 없는 Resource를 조회하면 description은 빈 문자열이 아닌 null로 응답된다")
+    void getResourceDetail_WithoutDescription_ShouldReturnNullDescription() {
+        // given
+        Resource resource = Resource.builder()
+                .name("Chest Press A-1")
+                .type(ResourceType.MACHINE)
+                .capacity(1)
+                .build();
+        ReflectionTestUtils.setField(resource, "id", RESOURCE_ID);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when
+        ResourceResponse response = resourceService.getResourceDetail(RESOURCE_ID);
+
+        // then
+        assertThat(response.description()).isNull();
     }
 
     @Test
@@ -178,6 +199,7 @@ class ResourceServiceTest {
         // given
         ResourceResponse cachedResponse = new ResourceResponse(
                 RESOURCE_ID, "Chest Press A-1", ResourceType.MACHINE, ResourceStatus.ACTIVE, 1,
+                "3F Weight Zone",
                 new ReservationPolicySummaryResponse(15, 15, 60),
                 "https://gymflow-resource-images.s3.ap-northeast-2.amazonaws.com/resources/10/sample.jpg");
         when(resourceCacheRepository.get(RESOURCE_ID)).thenReturn(Optional.of(cachedResponse));

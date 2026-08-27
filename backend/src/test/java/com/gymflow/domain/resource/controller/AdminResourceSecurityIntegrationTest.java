@@ -26,6 +26,7 @@ import java.util.Map;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -94,6 +95,35 @@ class AdminResourceSecurityIntegrationTest {
                 "minDuration", 15,
                 "maxDuration", 60
         );
+    }
+
+    @Test
+    @DisplayName("ADMIN 권한으로 Resource 단건을 조회하면 200 OK를 반환한다")
+    void getResource_WithAdminRole_ShouldReturnOk() throws Exception {
+        Resource resource = persistResourceWithPolicy("Admin Get Target " + System.nanoTime());
+
+        mockMvc.perform(get("/api/admin/resources/{resourceId}", resource.getId())
+                        .header("Authorization", "Bearer " + adminToken()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("USER 권한으로 Resource 단건 조회를 요청하면 403 Forbidden을 반환한다")
+    void getResource_WithUserRole_ShouldReturnForbidden() throws Exception {
+        Resource resource = persistResourceWithPolicy("User Get Target " + System.nanoTime());
+
+        mockMvc.perform(get("/api/admin/resources/{resourceId}", resource.getId())
+                        .header("Authorization", "Bearer " + userToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("토큰 없이 Resource 단건 조회를 요청하면 401 Unauthorized를 반환한다")
+    void getResource_WithoutToken_ShouldReturnUnauthorized() throws Exception {
+        Resource resource = persistResourceWithPolicy("No Token Get Target " + System.nanoTime());
+
+        mockMvc.perform(get("/api/admin/resources/{resourceId}", resource.getId()))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

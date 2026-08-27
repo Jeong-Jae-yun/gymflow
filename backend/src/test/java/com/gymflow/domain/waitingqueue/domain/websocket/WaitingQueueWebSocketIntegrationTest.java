@@ -86,7 +86,7 @@ class WaitingQueueWebSocketIntegrationTest {
         });
 
         WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(
-                1L, userId, 101L,
+                500L, 1L, userId, 101L,
                 LocalDateTime.of(2026, 8, 20, 14, 0),
                 LocalDateTime.of(2026, 8, 20, 14, 15),
                 LocalDateTime.now());
@@ -96,6 +96,7 @@ class WaitingQueueWebSocketIntegrationTest {
             waitingQueueEventPublisher.publish(event);
             String received = receivedMessages.poll(500, TimeUnit.MILLISECONDS);
             assertThat(received).isNotNull();
+            assertThat(received).contains("\"promotionId\":500");
             assertThat(received).contains("\"userId\":" + userId);
             assertThat(received).contains("\"waitingQueueId\":1");
         });
