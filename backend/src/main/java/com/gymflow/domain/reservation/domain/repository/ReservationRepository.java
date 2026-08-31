@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface ReservationRepository extends JpaRepository<Reservation, Long> {
@@ -17,6 +18,20 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
     Page<Reservation> findAllByUserId(Long userId, Pageable pageable);
 
     Optional<Reservation> findByIdAndUserId(Long id, Long userId);
+
+    @Query("""
+            select r from Reservation r
+            where r.resource.id = :resourceId
+              and r.status in :statuses
+              and r.startAt < :endAt
+              and r.endAt > :startAt
+            """)
+    List<Reservation> findOverlapping(
+            @Param("resourceId") Long resourceId,
+            @Param("statuses") Collection<ReservationStatus> statuses,
+            @Param("startAt") LocalDateTime startAt,
+            @Param("endAt") LocalDateTime endAt
+    );
 
     @Query("""
             select case when count(r) > 0 then true else false end
