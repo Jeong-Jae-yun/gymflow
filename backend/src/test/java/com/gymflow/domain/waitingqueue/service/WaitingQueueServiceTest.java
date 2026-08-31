@@ -11,6 +11,7 @@ import com.gymflow.domain.user.domain.enumtype.UserRole;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueuePromotion;
+import com.gymflow.domain.waitingqueue.domain.enumtype.PromotionStatus;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRegistrationLockRepository;
@@ -392,19 +393,10 @@ class WaitingQueueServiceTest {
         assertThat(response.getContent().get(0).waitingRank()).isEqualTo(3L);
         assertThat(response.getContent().get(0).promotionId()).isNull();
         verify(waitingQueueRepository).findAllByUserId(CURRENT_USER_ID, pageable);
-        verify(waitingQueuePromotionRepository, never()).findByWaitingQueueId(any());
+        verify(waitingQueuePromotionRepository, never()).findByWaitingQueueIdAndStatus(any(), any());
     }
 
-    @Test
-    @DisplayName("PROMOTED 상태의 대기열은 연결된 Promotion의 실제 PK를 promotionId로 반환한다")
-    void getMyWaitingQueues_WithPromotedWaitingQueue_ShouldReturnPromotionId() {
-        // given
-        Resource resource = activeResource();
-        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
-        waitingQueue.promote();
-        Pageable pageable = PageRequest.of(0, 10);
-        Page<WaitingQueue> page = new PageImpl<>(List.of(waitingQueue), pageable, 1);
-        when(waitingQueueRepository.findAllByUserId(CURRENT_USER_ID, pageable)).thenReturn(page);
+    private WaitingQueuePromotion promotionFor(WaitingQueue waitingQueue, Resource resource) {
         WaitingQueuePromotion promotion = WaitingQueuePromotion.builder()
                 .waitingQueue(waitingQueue)
                 .user(waitingQueue.getUser())
@@ -415,7 +407,22 @@ class WaitingQueueServiceTest {
                 .expiresAt(LocalDateTime.of(2026, 8, 12, 14, 0))
                 .build();
         ReflectionTestUtils.setField(promotion, "id", 501L);
-        when(waitingQueuePromotionRepository.findByWaitingQueueId(100L)).thenReturn(Optional.of(promotion));
+        return promotion;
+    }
+
+    @Test
+    @DisplayName("PROMOTED 상태의 대기열은 연결된 OFFERED Promotion의 실제 PK를 promotionId로 반환한다")
+    void getMyWaitingQueues_WithPromotedWaitingQueue_ShouldReturnPromotionId() {
+        // given
+        Resource resource = activeResource();
+        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
+        waitingQueue.promote();
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<WaitingQueue> page = new PageImpl<>(List.of(waitingQueue), pageable, 1);
+        when(waitingQueueRepository.findAllByUserId(CURRENT_USER_ID, pageable)).thenReturn(page);
+        WaitingQueuePromotion promotion = promotionFor(waitingQueue, resource);
+        when(waitingQueuePromotionRepository.findByWaitingQueueIdAndStatus(100L, PromotionStatus.OFFERED))
+                .thenReturn(Optional.of(promotion));
 
         // when
         Page<WaitingQueueResponse> response = waitingQueueService.getMyWaitingQueues(pageable);
@@ -427,7 +434,7 @@ class WaitingQueueServiceTest {
     }
 
     @Test
-    @DisplayName("PROMOTED 상태이지만 연결된 Promotion을 찾을 수 없으면 promotionId는 null로 응답한다")
+    @DisplayName("PROMOTED 상태이지만 연결된 OFFERED Promotion을 찾을 수 없으면 promotionId는 null로 응답한다")
     void getMyWaitingQueues_WithPromotedWaitingQueueButNoLinkedPromotion_ShouldReturnNullPromotionId() {
         // given
         Resource resource = activeResource();
@@ -436,12 +443,55 @@ class WaitingQueueServiceTest {
         Pageable pageable = PageRequest.of(0, 10);
         Page<WaitingQueue> page = new PageImpl<>(List.of(waitingQueue), pageable, 1);
         when(waitingQueueRepository.findAllByUserId(CURRENT_USER_ID, pageable)).thenReturn(page);
-        when(waitingQueuePromotionRepository.findByWaitingQueueId(100L)).thenReturn(Optional.empty());
+        when(waitingQueuePromotionRepository.findByWaitingQueueIdAndStatus(100L, PromotionStatus.OFFERED))
+                .thenReturn(Optional.empty());
 
         // when
         Page<WaitingQueueResponse> response = waitingQueueService.getMyWaitingQueues(pageable);
 
         // then
+        assertThat(response.getContent().get(0).promotionId()).isNull();
+    }
+
+    @Test
+    @DisplayName("PROMOTED 상태이지만 Promotion이 이미 ACCEPTED로 처리되었으면 promotionId는 null로 응답해 재등장하지 않는다")
+    void getMyWaitingQueues_WithAcceptedPromotion_ShouldReturnNullPromotionId() {
+        // given: accept()로 처리된 Promotion은 더 이상 OFFERED가 아니므로 findByWaitingQueueIdAndStatus(OFFERED)에 걸리지 않는다
+        Resource resource = activeResource();
+        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
+        waitingQueue.promote();
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<WaitingQueue> page = new PageImpl<>(List.of(waitingQueue), pageable, 1);
+        when(waitingQueueRepository.findAllByUserId(CURRENT_USER_ID, pageable)).thenReturn(page);
+        when(waitingQueuePromotionRepository.findByWaitingQueueIdAndStatus(100L, PromotionStatus.OFFERED))
+                .thenReturn(Optional.empty());
+
+        // when
+        Page<WaitingQueueResponse> response = waitingQueueService.getMyWaitingQueues(pageable);
+
+        // then
+        assertThat(response.getContent().get(0).status()).isEqualTo(WaitingQueueStatus.PROMOTED);
+        assertThat(response.getContent().get(0).promotionId()).isNull();
+    }
+
+    @Test
+    @DisplayName("PROMOTED 상태이지만 Promotion이 이미 REJECTED로 처리되었으면 promotionId는 null로 응답해 재등장하지 않는다")
+    void getMyWaitingQueues_WithRejectedPromotion_ShouldReturnNullPromotionId() {
+        // given
+        Resource resource = activeResource();
+        WaitingQueue waitingQueue = waitingQueue(100L, user(), resource);
+        waitingQueue.promote();
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<WaitingQueue> page = new PageImpl<>(List.of(waitingQueue), pageable, 1);
+        when(waitingQueueRepository.findAllByUserId(CURRENT_USER_ID, pageable)).thenReturn(page);
+        when(waitingQueuePromotionRepository.findByWaitingQueueIdAndStatus(100L, PromotionStatus.OFFERED))
+                .thenReturn(Optional.empty());
+
+        // when
+        Page<WaitingQueueResponse> response = waitingQueueService.getMyWaitingQueues(pageable);
+
+        // then
+        assertThat(response.getContent().get(0).status()).isEqualTo(WaitingQueueStatus.PROMOTED);
         assertThat(response.getContent().get(0).promotionId()).isNull();
     }
 

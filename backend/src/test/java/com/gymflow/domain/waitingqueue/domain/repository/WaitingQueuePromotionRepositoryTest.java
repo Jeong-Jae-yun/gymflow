@@ -191,6 +191,66 @@ class WaitingQueuePromotionRepositoryTest {
     }
 
     @Test
+    @DisplayName("findByWaitingQueueIdAndStatus는 OFFERED 상태인 Promotion만 조회한다")
+    void findByWaitingQueueIdAndStatus_WithOfferedPromotion_ShouldReturnPromotion() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion saved = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        entityManager.flush();
+        entityManager.clear();
+
+        // when
+        Optional<WaitingQueuePromotion> found =
+                promotionRepository.findByWaitingQueueIdAndStatus(waitingQueue.getId(), PromotionStatus.OFFERED);
+
+        // then
+        assertThat(found).isPresent();
+        assertThat(found.get().getId()).isEqualTo(saved.getId());
+    }
+
+    @Test
+    @DisplayName("findByWaitingQueueIdAndStatus는 ACCEPTED로 처리된 Promotion에 대해 OFFERED 조회 시 빈 값을 반환한다")
+    void findByWaitingQueueIdAndStatus_WithAcceptedPromotion_ShouldReturnEmptyForOfferedQuery() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion promotion = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        promotion.accept(LocalDateTime.of(2026, 8, 12, 13, 59));
+        entityManager.flush();
+        entityManager.clear();
+
+        // when
+        Optional<WaitingQueuePromotion> found =
+                promotionRepository.findByWaitingQueueIdAndStatus(waitingQueue.getId(), PromotionStatus.OFFERED);
+
+        // then
+        assertThat(found).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findByWaitingQueueIdAndStatus는 REJECTED로 처리된 Promotion에 대해 OFFERED 조회 시 빈 값을 반환한다")
+    void findByWaitingQueueIdAndStatus_WithRejectedPromotion_ShouldReturnEmptyForOfferedQuery() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waitingQueue = persistWaitingQueue(user, resource);
+        WaitingQueuePromotion promotion = promotionRepository.save(buildPromotion(waitingQueue, user, resource));
+        promotion.reject(LocalDateTime.of(2026, 8, 12, 13, 59));
+        entityManager.flush();
+        entityManager.clear();
+
+        // when
+        Optional<WaitingQueuePromotion> found =
+                promotionRepository.findByWaitingQueueIdAndStatus(waitingQueue.getId(), PromotionStatus.OFFERED);
+
+        // then
+        assertThat(found).isEmpty();
+    }
+
+    @Test
     @DisplayName("findByResourceIdAndStartAtAndEndAtAndStatus는 활성 OFFERED Promotion을 조회한다")
     void findByResourceIdAndStartAtAndEndAtAndStatus_WithActiveOffer_ShouldReturnPromotion() {
         // given
