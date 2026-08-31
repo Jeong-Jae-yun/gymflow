@@ -24,7 +24,7 @@ env:
 
   JWT_SECRET: Z3ltZmxvdy1jaS1kdW1teS1qd3Qtc2VjcmV0LWZvci10ZXN0aW5nLW9ubHktbm90LWZvci1wcm9kdWN0aW9uLXVzZQ==
   JWT_ACCESS_TOKEN_EXPIRATION: 3600000
-  FRONTEND_ORIGIN: http://localhost:3000
+  FRONTEND_ORIGIN: http://localhost:5173
   AWS_REGION: ap-northeast-2
   S3_RESOURCE_IMAGE_BUCKET: gymflow-resource-images-test
 
