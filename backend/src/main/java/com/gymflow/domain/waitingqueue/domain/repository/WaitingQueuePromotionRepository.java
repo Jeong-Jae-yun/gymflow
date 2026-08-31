@@ -17,6 +17,8 @@ public interface WaitingQueuePromotionRepository extends JpaRepository<WaitingQu
 
     Optional<WaitingQueuePromotion> findByWaitingQueueId(Long waitingQueueId);
 
+    Optional<WaitingQueuePromotion> findByWaitingQueueIdAndStatus(Long waitingQueueId, PromotionStatus status);
+
     Optional<WaitingQueuePromotion> findByReservationId(Long reservationId);
 
     Optional<WaitingQueuePromotion> findByResourceIdAndStartAtAndEndAtAndStatus(

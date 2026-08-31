@@ -15,6 +15,7 @@ import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
@@ -39,6 +40,7 @@ import static org.awaitility.Awaitility.await;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration.class)
+@TestPropertySource(properties = "websocket.allowed-origins=http://localhost:5173")
 class WaitingQueueWebSocketIntegrationTest {
 
     @LocalServerPort
@@ -117,6 +119,64 @@ class WaitingQueueWebSocketIntegrationTest {
         CompletableFuture<StompSession> future = stompClient.connectAsync(
                 "ws://localhost:" + port + "/ws",
                 new WebSocketHttpHeaders(),
+                connectHeaders,
+                new StompSessionHandlerAdapter() {
+                });
+
+        // then
+        assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    @DisplayName("브라우저의 Vite dev 서버 Origin(localhost:5173)에서 온 handshake는 허용된다")
+    void handshake_WithConfiguredDevOrigin_ShouldBeAccepted() throws Exception {
+        // given: 실제 브라우저는 handshake HTTP 요청에 Origin 헤더를 반드시 실어 보낸다.
+        // 이 헤더가 websocket.allowed-origins(FRONTEND_ORIGIN)와 일치해야 handshake가 통과한다.
+        Long userId = 778L;
+        String token = jwtTokenProvider.createAccessToken(userId, "ws-origin-ok@gymflow.com", UserRole.USER);
+
+        WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
+
+        WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
+        handshakeHeaders.add("Origin", "http://localhost:5173");
+
+        StompHeaders connectHeaders = new StompHeaders();
+        connectHeaders.add("Authorization", "Bearer " + token);
+
+        // when
+        StompSession session = stompClient
+                .connectAsync(
+                        "ws://localhost:" + port + "/ws",
+                        handshakeHeaders,
+                        connectHeaders,
+                        new StompSessionHandlerAdapter() {
+                        })
+                .get(5, TimeUnit.SECONDS);
+
+        // then
+        assertThat(session.isConnected()).isTrue();
+        session.disconnect();
+    }
+
+    @Test
+    @DisplayName("허용되지 않은 Origin에서 온 handshake는 403으로 거부된다")
+    void handshake_WithDisallowedOrigin_ShouldBeRejected() {
+        // given
+        Long userId = 779L;
+        String token = jwtTokenProvider.createAccessToken(userId, "ws-origin-bad@gymflow.com", UserRole.USER);
+
+        WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
+
+        WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
+        handshakeHeaders.add("Origin", "http://evil.example.com");
+
+        StompHeaders connectHeaders = new StompHeaders();
+        connectHeaders.add("Authorization", "Bearer " + token);
+
+        // when
+        CompletableFuture<StompSession> future = stompClient.connectAsync(
+                "ws://localhost:" + port + "/ws",
+                handshakeHeaders,
                 connectHeaders,
                 new StompSessionHandlerAdapter() {
                 });

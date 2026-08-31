@@ -9,6 +9,7 @@ import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.user.domain.repository.UserRepository;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueue;
 import com.gymflow.domain.waitingqueue.domain.entity.WaitingQueuePromotion;
+import com.gymflow.domain.waitingqueue.domain.enumtype.PromotionStatus;
 import com.gymflow.domain.waitingqueue.domain.enumtype.WaitingQueueStatus;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRedisRepository;
 import com.gymflow.domain.waitingqueue.domain.redis.WaitingQueueRegistrationLockRepository;
@@ -168,7 +169,8 @@ public class WaitingQueueService {
         if (waitingQueue.getStatus() != WaitingQueueStatus.PROMOTED) {
             return null;
         }
-        return waitingQueuePromotionRepository.findByWaitingQueueId(waitingQueue.getId())
+        return waitingQueuePromotionRepository
+                .findByWaitingQueueIdAndStatus(waitingQueue.getId(), PromotionStatus.OFFERED)
                 .map(WaitingQueuePromotion::getId)
                 .orElse(null);
     }

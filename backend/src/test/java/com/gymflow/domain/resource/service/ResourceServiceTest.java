@@ -1,5 +1,9 @@
 package com.gymflow.domain.resource.service;
 
+import com.gymflow.domain.reservation.domain.entity.Reservation;
+import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
+import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
+import com.gymflow.domain.user.domain.entity.User;
 import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
@@ -9,8 +13,10 @@ import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository.RankedResource;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.resource.domain.storage.ResourceImageStorage;
+import com.gymflow.domain.resource.dto.response.AvailabilitySlotResponse;
 import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
 import com.gymflow.domain.resource.dto.response.ReservationPolicySummaryResponse;
+import com.gymflow.domain.resource.dto.response.ResourceAvailabilityResponse;
 import com.gymflow.domain.resource.dto.response.ResourceRankingResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
 import com.gymflow.global.common.exception.BusinessException;
@@ -30,6 +36,8 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -52,6 +60,9 @@ class ResourceServiceTest {
 
     @Mock
     private ResourceRepository resourceRepository;
+
+    @Mock
+    private ReservationRepository reservationRepository;
 
     @Mock
     private ResourceCacheRepository resourceCacheRepository;
@@ -902,5 +913,134 @@ class ResourceServiceTest {
         assertThatThrownBy(() -> resourceService.getResourceRanking(103L))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("DB 오류");
+    }
+
+    private Reservation confirmedReservation(Resource resource, LocalDateTime startAt, LocalDateTime endAt) {
+        User user = User.builder()
+                .email("reserver@gymflow.com")
+                .password("securePassword123")
+                .name("Reserver")
+                .build();
+        return Reservation.builder()
+                .reservationBatchId(java.util.UUID.randomUUID())
+                .user(user)
+                .resource(resource)
+                .startAt(startAt)
+                .endAt(endAt)
+                .build();
+    }
+
+    @Test
+    @DisplayName("getAvailability: 겹치는 예약이 없으면 정책(slot/min/max)에 맞춰 생성된 모든 슬롯이 available=true로 반환된다")
+    void getAvailability_WithNoConflicts_ShouldReturnAllSlotsAvailable() {
+        // given: slotDuration=15, minDuration=15 → 하루(1440분) / 15분 = 96개 슬롯
+        Resource resource = resourceWithPolicy();
+        LocalDate date = LocalDate.now().plusDays(1);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.findOverlapping(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(List.of());
+
+        // when
+        ResourceAvailabilityResponse response = resourceService.getAvailability(RESOURCE_ID, date);
+
+        // then
+        assertThat(response.resourceId()).isEqualTo(RESOURCE_ID);
+        assertThat(response.date()).isEqualTo(date);
+        assertThat(response.slotDuration()).isEqualTo(15);
+        assertThat(response.minDuration()).isEqualTo(15);
+        assertThat(response.maxDuration()).isEqualTo(60);
+        assertThat(response.slots()).hasSize(96);
+        assertThat(response.slots()).allMatch(AvailabilitySlotResponse::available);
+        assertThat(response.slots().get(0).startAt()).isEqualTo(date.atStartOfDay());
+    }
+
+    @Test
+    @DisplayName("getAvailability: 예약과 겹치는 시작 시간 슬롯만 available=false로 표시하고 나머지는 available=true로 유지한다")
+    void getAvailability_WithOverlappingReservation_ShouldMarkOnlyConflictingSlotsUnavailable() {
+        // given: 10:00~10:30 예약이 있으면 09:45 슬롯(09:45~10:00)과 10:30 슬롯(10:30~10:45)은 겹치지 않는다
+        Resource resource = resourceWithPolicy();
+        LocalDate date = LocalDate.now().plusDays(1);
+        LocalDateTime reservedStart = date.atTime(10, 0);
+        LocalDateTime reservedEnd = date.atTime(10, 30);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.findOverlapping(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(List.of(confirmedReservation(resource, reservedStart, reservedEnd)));
+
+        // when
+        ResourceAvailabilityResponse response = resourceService.getAvailability(RESOURCE_ID, date);
+
+        // then
+        assertThat(slotAvailability(response, date.atTime(9, 45))).isTrue();
+        assertThat(slotAvailability(response, date.atTime(10, 0))).isFalse();
+        assertThat(slotAvailability(response, date.atTime(10, 15))).isFalse();
+        assertThat(slotAvailability(response, date.atTime(10, 30))).isTrue();
+    }
+
+    private boolean slotAvailability(ResourceAvailabilityResponse response, LocalDateTime startAt) {
+        return response.slots().stream()
+                .filter(slot -> slot.startAt().equals(startAt))
+                .findFirst()
+                .orElseThrow()
+                .available();
+    }
+
+    @Test
+    @DisplayName("getAvailability: 존재하지 않는 Resource를 조회하면 예외가 발생한다")
+    void getAvailability_WithNonExistentResource_ShouldThrowException() {
+        // given
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() -> resourceService.getAvailability(RESOURCE_ID, LocalDate.now().plusDays(1)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("getAvailability: ACTIVE 상태가 아닌 Resource를 조회하면 예외가 발생한다")
+    void getAvailability_WithInactiveResource_ShouldThrowException() {
+        // given
+        Resource resource = resourceWithPolicy();
+        ReflectionTestUtils.setField(resource, "status", ResourceStatus.MAINTENANCE);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when & then
+        assertThatThrownBy(() -> resourceService.getAvailability(RESOURCE_ID, LocalDate.now().plusDays(1)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_ACTIVE);
+    }
+
+    @Test
+    @DisplayName("getAvailability: 예약 정책이 없는 Resource를 조회하면 예외가 발생한다")
+    void getAvailability_WithoutReservationPolicy_ShouldThrowException() {
+        // given
+        Resource resource = resource();
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+
+        // when & then
+        assertThatThrownBy(() -> resourceService.getAvailability(RESOURCE_ID, LocalDate.now().plusDays(1)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_POLICY_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("getAvailability: 과거 날짜를 조회하면 모든 슬롯이 available=false로 반환된다")
+    void getAvailability_WithPastDate_ShouldMarkAllSlotsUnavailable() {
+        // given
+        Resource resource = resourceWithPolicy();
+        LocalDate pastDate = LocalDate.now().minusDays(1);
+        when(resourceRepository.findWithReservationPolicyById(RESOURCE_ID)).thenReturn(Optional.of(resource));
+        when(reservationRepository.findOverlapping(
+                eq(RESOURCE_ID), eq(ReservationStatus.OCCUPYING_STATUSES), any(), any()))
+                .thenReturn(List.of());
+
+        // when
+        ResourceAvailabilityResponse response = resourceService.getAvailability(RESOURCE_ID, pastDate);
+
+        // then
+        assertThat(response.slots()).isNotEmpty();
+        assertThat(response.slots()).noneMatch(AvailabilitySlotResponse::available);
     }
 }

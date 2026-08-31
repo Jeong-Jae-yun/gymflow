@@ -1,5 +1,6 @@
 package com.gymflow.domain.waitingqueue.domain.redis;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,12 +9,16 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -34,6 +39,14 @@ class WaitingQueueEventPublisherTest {
     @BeforeEach
     void setUp() {
         waitingQueueEventPublisher = new WaitingQueueEventPublisher(redisTemplate, objectMapper);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+        TransactionSynchronizationManager.setActualTransactionActive(false);
     }
 
     @Test
@@ -82,5 +95,69 @@ class WaitingQueueEventPublisherTest {
                 .convertAndSend(eq(WaitingQueueEventChannel.WAITING_QUEUE_EVENT), payloadCaptor.capture());
         assertThat(payloadCaptor.getAllValues()).hasSize(2);
         assertThat(payloadCaptor.getAllValues().get(0)).isNotEqualTo(payloadCaptor.getAllValues().get(1));
+    }
+
+    @Test
+    @DisplayName("활성 트랜잭션 안에서 호출하면 afterCommit 이전에는 발행하지 않는다 (commit-before-publish race 방지)")
+    void publish_WithActiveTransaction_ShouldNotPublishBeforeCommit() {
+        // given
+        WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(500L, 10L, 3L, 101L, START_AT, END_AT, PROMOTED_AT);
+        TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+
+        // when
+        waitingQueueEventPublisher.publish(event);
+
+        // then: 트랜잭션이 아직 commit되지 않았으므로 Redis에는 아무것도 발행되지 않아야 한다
+        verify(redisTemplate, never()).convertAndSend(any(), any());
+    }
+
+    @Test
+    @DisplayName("활성 트랜잭션 안에서 호출한 이벤트는 afterCommit 콜백이 실행된 시점에 비로소 발행된다")
+    void publish_WithActiveTransaction_ShouldPublishOnlyAfterCommitCallbackRuns() {
+        // given
+        WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(500L, 10L, 3L, 101L, START_AT, END_AT, PROMOTED_AT);
+        TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        waitingQueueEventPublisher.publish(event);
+
+        // when: 실제 PlatformTransactionManager가 COMMIT을 마친 뒤 호출하는 afterCommit을 재현한다
+        for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+            synchronization.afterCommit();
+        }
+
+        // then
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisTemplate).convertAndSend(eq(WaitingQueueEventChannel.WAITING_QUEUE_EVENT), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue()).contains("\"promotionId\":500");
+    }
+
+    @Test
+    @DisplayName("활성 트랜잭션이 ROLLBACK되어 afterCommit이 호출되지 않으면 이벤트는 끝내 발행되지 않는다")
+    void publish_WithActiveTransactionThatRollsBack_ShouldNeverPublish() {
+        // given
+        WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(500L, 10L, 3L, 101L, START_AT, END_AT, PROMOTED_AT);
+        TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+
+        // when: ROLLBACK을 흉내낸다 - afterCommit은 호출되지 않고 트랜잭션이 그대로 정리된다
+        waitingQueueEventPublisher.publish(event);
+        TransactionSynchronizationManager.clearSynchronization();
+
+        // then
+        verify(redisTemplate, never()).convertAndSend(any(), any());
+    }
+
+    @Test
+    @DisplayName("활성 트랜잭션이 없으면 지연 없이 즉시 발행한다")
+    void publish_WithoutActiveTransaction_ShouldPublishImmediately() {
+        // given
+        WaitingQueuePromotedEvent event = new WaitingQueuePromotedEvent(500L, 10L, 3L, 101L, START_AT, END_AT, PROMOTED_AT);
+
+        // when
+        waitingQueueEventPublisher.publish(event);
+
+        // then
+        verify(redisTemplate).convertAndSend(eq(WaitingQueueEventChannel.WAITING_QUEUE_EVENT), any());
     }
 }
