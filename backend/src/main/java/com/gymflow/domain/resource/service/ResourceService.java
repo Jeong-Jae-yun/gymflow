@@ -1,5 +1,9 @@
 package com.gymflow.domain.resource.service;
 
+import com.gymflow.domain.reservation.domain.entity.Reservation;
+import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
+import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
+import com.gymflow.domain.resource.domain.entity.ReservationPolicy;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceStatus;
 import com.gymflow.domain.resource.domain.redis.ResourceCacheRepository;
@@ -7,7 +11,9 @@ import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository;
 import com.gymflow.domain.resource.domain.redis.ResourceRankingRedisRepository.RankedResource;
 import com.gymflow.domain.resource.domain.repository.ResourceRepository;
 import com.gymflow.domain.resource.domain.storage.ResourceImageStorage;
+import com.gymflow.domain.resource.dto.response.AvailabilitySlotResponse;
 import com.gymflow.domain.resource.dto.response.PopularResourceResponse;
+import com.gymflow.domain.resource.dto.response.ResourceAvailabilityResponse;
 import com.gymflow.domain.resource.dto.response.ResourceRankingResponse;
 import com.gymflow.domain.resource.dto.response.ResourceResponse;
 import com.gymflow.domain.resource.mapper.ResourceMapper;
@@ -21,6 +27,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +47,7 @@ public class ResourceService {
     private static final int RANKING_SCAN_BATCH_SIZE = 20;
 
     private final ResourceRepository resourceRepository;
+    private final ReservationRepository reservationRepository;
     private final ResourceCacheRepository resourceCacheRepository;
     private final ResourceRankingRedisRepository resourceRankingRedisRepository;
     private final ResourceImageStorage resourceImageStorage;
@@ -84,6 +93,54 @@ public class ResourceService {
         } catch (RuntimeException e) {
             log.warn("Resource cache operation failed. resourceId={}", resourceId, e);
         }
+    }
+
+    public ResourceAvailabilityResponse getAvailability(Long resourceId, LocalDate date) {
+        Resource resource = resourceRepository.findWithReservationPolicyById(resourceId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        if (resource.getStatus() != ResourceStatus.ACTIVE) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_ACTIVE);
+        }
+
+        ReservationPolicy policy = resource.getReservationPolicy();
+        if (policy == null) {
+            throw new BusinessException(ErrorCode.RESERVATION_POLICY_NOT_FOUND);
+        }
+
+        LocalDateTime dayStart = date.atStartOfDay();
+        LocalDateTime dayEnd = dayStart.plusDays(1);
+
+        List<Reservation> occupyingReservations = reservationRepository.findOverlapping(
+                resourceId, ReservationStatus.OCCUPYING_STATUSES, dayStart, dayEnd);
+
+        List<AvailabilitySlotResponse> slots = buildSlots(policy, dayStart, dayEnd, occupyingReservations);
+
+        return new ResourceAvailabilityResponse(
+                resourceId, date, policy.getSlotDuration(), policy.getMinDuration(), policy.getMaxDuration(), slots);
+    }
+
+    private List<AvailabilitySlotResponse> buildSlots(
+            ReservationPolicy policy, LocalDateTime dayStart, LocalDateTime dayEnd, List<Reservation> occupyingReservations) {
+        int slotDuration = policy.getSlotDuration();
+        int minDuration = policy.getMinDuration();
+        LocalDateTime now = LocalDateTime.now();
+
+        List<AvailabilitySlotResponse> slots = new ArrayList<>();
+        for (LocalDateTime slotStart = dayStart;
+             !slotStart.plusMinutes(minDuration).isAfter(dayEnd);
+             slotStart = slotStart.plusMinutes(slotDuration)) {
+            LocalDateTime currentSlotStart = slotStart;
+            LocalDateTime slotEnd = slotStart.plusMinutes(slotDuration);
+            LocalDateTime minEnd = slotStart.plusMinutes(minDuration);
+
+            boolean isPast = slotStart.isBefore(now);
+            boolean conflicts = occupyingReservations.stream()
+                    .anyMatch(r -> r.getStartAt().isBefore(minEnd) && r.getEndAt().isAfter(currentSlotStart));
+
+            slots.add(new AvailabilitySlotResponse(slotStart, slotEnd, !isPast && !conflicts));
+        }
+        return slots;
     }
 
     public List<PopularResourceResponse> getPopularResources(int limit) {
