@@ -29,6 +29,9 @@ jwt:
 websocket:
   allowed-origins: ${FRONTEND_ORIGIN:http://localhost:5173}
 
+cors:
+  allowed-origins: ${FRONTEND_ORIGIN:http://localhost:5173}
+
 aws:
   region: ${AWS_REGION:ap-northeast-2}
   s3:
