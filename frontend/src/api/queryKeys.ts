@@ -11,6 +11,7 @@ export const queryKeys = {
     popular: (limit: number) => ['resources', 'popular', limit] as const,
     rankings: (limit: number) => ['resources', 'rankings', limit] as const,
     ranking: (id: number) => ['resources', 'ranking', id] as const,
+    availability: (id: number, date: string) => ['resources', 'availability', id, date] as const,
   },
 
   adminResources: {

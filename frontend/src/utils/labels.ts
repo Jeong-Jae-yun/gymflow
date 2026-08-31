@@ -63,7 +63,7 @@ export const cancelReasonLabels: Record<CancelReason, string> = {
 
 export const waitingQueueStatusLabels: Record<WaitingQueueStatus, string> = {
   WAITING: '대기 중',
-  PROMOTED: '승급됨',
+  PROMOTED: '처리 완료',
   CANCELLED: '취소됨',
 }
 

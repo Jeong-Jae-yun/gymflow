@@ -111,8 +111,9 @@ export function AdminResourceFormPage() {
           minDuration: updated.minDuration,
           maxDuration: updated.maxDuration,
         })
+        navigate('/admin/resources')
       } else {
-        const created = await createResource.mutateAsync({
+        await createResource.mutateAsync({
           name: values.name,
           type: values.type,
           capacity: values.capacity,
@@ -122,7 +123,7 @@ export function AdminResourceFormPage() {
           maxDuration: values.maxDuration,
         })
         showToast({ tone: 'success', title: 'Resource가 등록되었습니다' })
-        navigate(`/admin/resources/${created.id}/edit`, { replace: true })
+        navigate('/admin/resources')
       }
     } catch (error) {
       showToast({ tone: 'danger', title: '저장 실패', description: getErrorMessage(error) })

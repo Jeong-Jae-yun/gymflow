@@ -24,3 +24,11 @@ export function useTopRankings(limit = 6) {
     queryFn: () => resourcesApi.getTopRankings(limit),
   })
 }
+
+export function useResourceAvailability(resourceId: number, date: string) {
+  return useQuery({
+    queryKey: queryKeys.resources.availability(resourceId, date),
+    queryFn: () => resourcesApi.getAvailability(resourceId, date),
+    enabled: Number.isFinite(resourceId) && date.length > 0,
+  })
+}

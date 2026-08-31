@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet } from 'react-router-dom'
 import { Menu, Shield, X } from 'lucide-react'
 import { Logo } from '@/components/Logo'
 import { UserMenu } from '@/components/UserMenu'
@@ -33,7 +33,13 @@ export function AppLayout() {
       <header className="sticky top-0 z-30 border-b border-neutral-200 bg-white/95 backdrop-blur-sm">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-8">
-            <Logo />
+            <Link
+              to="/"
+              className="rounded-md transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+              aria-label="GymFlow 홈으로 이동"
+            >
+              <Logo />
+            </Link>
             <nav className="hidden items-center gap-1 md:flex">
               {NAV_ITEMS.map((item) => (
                 <NavLink key={item.to} to={item.to} end={item.end} className={navLinkClass}>

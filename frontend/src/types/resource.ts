@@ -31,6 +31,21 @@ export interface PopularResourceResponse {
   rank: number
 }
 
+export interface AvailabilitySlot {
+  startAt: string
+  endAt: string
+  available: boolean
+}
+
+export interface ResourceAvailabilityResponse {
+  resourceId: number
+  date: string
+  slotDuration: number
+  minDuration: number
+  maxDuration: number
+  slots: AvailabilitySlot[]
+}
+
 export interface ResourceRankingResponse {
   rank: number | null
   resourceId: number

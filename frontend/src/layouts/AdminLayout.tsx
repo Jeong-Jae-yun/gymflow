@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet } from 'react-router-dom'
 import { ArrowLeft, Shield } from 'lucide-react'
 import { UserMenu } from '@/components/UserMenu'
 import { cn } from '@/utils/cn'
@@ -19,12 +19,16 @@ export function AdminLayout() {
       <header className="sticky top-0 z-30 bg-neutral-900 text-white">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-8">
-            <span className="inline-flex items-center gap-2 font-semibold tracking-tight">
+            <Link
+              to="/admin/resources"
+              className="inline-flex items-center gap-2 rounded-md font-semibold tracking-tight transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-900"
+              aria-label="Admin 홈으로 이동"
+            >
               <span className="flex size-7 items-center justify-center rounded-md bg-accent-500 text-neutral-900">
                 <Shield className="size-4" aria-hidden="true" />
               </span>
               GymFlow Admin
-            </span>
+            </Link>
             <nav className="hidden items-center gap-1 md:flex">
               {ADMIN_NAV_ITEMS.map((item) => (
                 <NavLink key={item.to} to={item.to} className={navLinkClass}>

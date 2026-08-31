@@ -1,6 +1,12 @@
 import { apiClient } from './client'
 import { toPageableParams, type PageParams } from './pageParams'
-import type { PopularResourceResponse, ResourceRankingResponse, ResourceResponse, SpringPage } from '@/types'
+import type {
+  PopularResourceResponse,
+  ResourceAvailabilityResponse,
+  ResourceRankingResponse,
+  ResourceResponse,
+  SpringPage,
+} from '@/types'
 
 export const resourcesApi = {
   getResources: (params?: PageParams) =>
@@ -10,6 +16,11 @@ export const resourcesApi = {
 
   getResourceDetail: (resourceId: number) =>
     apiClient.get<ResourceResponse>(`/api/resources/${resourceId}`).then((res) => res.data),
+
+  getAvailability: (resourceId: number, date: string) =>
+    apiClient
+      .get<ResourceAvailabilityResponse>(`/api/resources/${resourceId}/availability`, { params: { date } })
+      .then((res) => res.data),
 
   getPopularResources: (limit = 10) =>
     apiClient

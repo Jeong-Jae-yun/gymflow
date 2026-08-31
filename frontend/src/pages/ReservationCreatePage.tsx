@@ -1,21 +1,33 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, CalendarClock, CheckCircle2, Clock3 } from 'lucide-react'
-import { Button, Card, ErrorState, FormField, Input, PageSpinner, Select } from '@/components/ui'
-import { useResourceDetail } from '@/features/resources/hooks'
+import { Button, Card, EmptyState, ErrorState, FormField, Input, PageSpinner, Select, Skeleton } from '@/components/ui'
+import { useResourceAvailability, useResourceDetail } from '@/features/resources/hooks'
 import { useCreateReservation } from '@/features/reservations/hooks'
 import { useRegisterWaitingQueue } from '@/features/waitingQueue/hooks'
 import { useToast } from '@/context/useToast'
-import { toBackendDateTime, formatDateTime, formatDuration } from '@/utils/date'
+import { toBackendDateTime, formatDateTime, formatDuration, formatTime } from '@/utils/date'
 import { getErrorMessage } from '@/utils/getErrorMessage'
 import { resourceTypeLabels } from '@/utils/labels'
-import type { ApiError } from '@/types'
+import { cn } from '@/utils/cn'
+import type { ApiError, AvailabilitySlot } from '@/types'
 
 type Step = 'form' | 'review' | 'conflict' | 'success'
+type DayPeriod = '오전' | '오후' | '저녁'
+
+const PERIOD_ORDER: DayPeriod[] = ['오전', '오후', '저녁']
 
 function todayDateString(): string {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+/** Buckets a slot by its hour-of-day so the grid can be split into 오전/오후/저녁 sections. */
+function periodOf(slot: AvailabilitySlot): DayPeriod {
+  const hour = Number(slot.startAt.slice(11, 13))
+  if (hour < 12) return '오전'
+  if (hour < 18) return '오후'
+  return '저녁'
 }
 
 export function ReservationCreatePage() {
@@ -23,6 +35,7 @@ export function ReservationCreatePage() {
   const resourceId = Number(params.resourceId)
   const navigate = useNavigate()
   const { showToast } = useToast()
+  const startTimeGroupId = useId()
 
   const resourceQuery = useResourceDetail(resourceId)
   const createReservation = useCreateReservation()
@@ -30,11 +43,19 @@ export function ReservationCreatePage() {
 
   const [step, setStep] = useState<Step>('form')
   const [date, setDate] = useState(todayDateString())
-  const [time, setTime] = useState('')
+  const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlot | null>(null)
   const [duration, setDuration] = useState<number | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [conflictError, setConflictError] = useState<ApiError | null>(null)
   const [createdReservationId, setCreatedReservationId] = useState<number | null>(null)
+
+  const availabilityQuery = useResourceAvailability(resourceId, date)
+
+  // The previously selected slot belongs to whichever date it was fetched for; once the
+  // user picks a different date it's no longer a valid selection.
+  useEffect(() => {
+    setSelectedSlot(null)
+  }, [date])
 
   const policy = resourceQuery.data?.reservationPolicy ?? null
 
@@ -48,15 +69,21 @@ export function ReservationCreatePage() {
     return options
   }, [policy])
 
-  const timeStepSeconds = policy ? policy.slotDuration * 60 : 60
+  const slotsByPeriod = useMemo(() => {
+    const grouped: Record<DayPeriod, AvailabilitySlot[]> = { 오전: [], 오후: [], 저녁: [] }
+    for (const slot of availabilityQuery.data?.slots ?? []) {
+      grouped[periodOf(slot)].push(slot)
+    }
+    return grouped
+  }, [availabilityQuery.data])
 
   const { startDate, endDate } = useMemo(() => {
-    if (!date || !time || !duration) return { startDate: null, endDate: null }
-    const start = new Date(`${date}T${time}:00`)
+    if (!selectedSlot || !duration) return { startDate: null, endDate: null }
+    const start = new Date(selectedSlot.startAt)
     if (Number.isNaN(start.getTime())) return { startDate: null, endDate: null }
     const end = new Date(start.getTime() + duration * 60_000)
     return { startDate: start, endDate: end }
-  }, [date, time, duration])
+  }, [selectedSlot, duration])
 
   if (resourceQuery.isPending) {
     return <PageSpinner label="Resource 정보를 불러오는 중입니다..." />
@@ -79,7 +106,7 @@ export function ReservationCreatePage() {
 
   function handleSubmitForm() {
     setFormError(null)
-    if (!time) {
+    if (!selectedSlot) {
       setFormError('예약 시작 시간을 선택해 주세요.')
       return
     }
@@ -162,17 +189,75 @@ export function ReservationCreatePage() {
               )}
             </FormField>
 
-            <FormField label="시작 시간" required helpText={`${policy.slotDuration}분 단위로 선택할 수 있습니다.`}>
-              {(id) => (
-                <Input
-                  id={id}
-                  type="time"
-                  step={timeStepSeconds}
-                  value={time}
-                  onChange={(event) => setTime(event.target.value)}
-                />
-              )}
-            </FormField>
+            <div className="flex flex-col gap-1.5">
+              <span id={startTimeGroupId} className="text-sm font-medium text-neutral-800">
+                시작 시간
+                <span className="ml-0.5 text-danger-600" aria-hidden="true">
+                  *
+                </span>
+              </span>
+
+              <div
+                role="group"
+                aria-labelledby={startTimeGroupId}
+                className="max-h-72 overflow-y-auto rounded-md border border-neutral-200 p-3"
+              >
+                {availabilityQuery.isPending && (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {Array.from({ length: 12 }).map((_, index) => (
+                      <Skeleton key={index} className="h-9 w-full" />
+                    ))}
+                  </div>
+                )}
+
+                {availabilityQuery.isError && (
+                  <ErrorState error={availabilityQuery.error} onRetry={() => availabilityQuery.refetch()} />
+                )}
+
+                {availabilityQuery.data && availabilityQuery.data.slots.length === 0 && (
+                  <EmptyState
+                    icon={Clock3}
+                    title="예약 가능한 시간이 없습니다"
+                    description="다른 날짜를 선택해 주세요."
+                  />
+                )}
+
+                {availabilityQuery.data && availabilityQuery.data.slots.length > 0 && (
+                  <div className="flex flex-col gap-4">
+                    {PERIOD_ORDER.filter((period) => slotsByPeriod[period].length > 0).map((period) => (
+                      <div key={period}>
+                        <p className="mb-2 text-xs font-medium text-neutral-500">{period}</p>
+                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                          {slotsByPeriod[period].map((slot) => {
+                            const isSelected = selectedSlot?.startAt === slot.startAt
+                            return (
+                              <button
+                                key={slot.startAt}
+                                type="button"
+                                disabled={!slot.available}
+                                aria-pressed={isSelected}
+                                onClick={() => setSelectedSlot(slot)}
+                                className={cn(
+                                  'rounded-md border px-2 py-1.5 text-sm font-medium transition-colors',
+                                  isSelected && 'border-brand-600 bg-brand-600 text-white',
+                                  !isSelected && slot.available && 'border-neutral-200 text-neutral-700 hover:border-brand-400 hover:bg-brand-50',
+                                  !slot.available && 'cursor-not-allowed border-neutral-100 text-neutral-300',
+                                )}
+                              >
+                                {formatTime(slot.startAt)}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <p className="text-sm text-neutral-500">
+                {policy.slotDuration}분 단위로 예약 가능한 시간 중에서 선택할 수 있습니다.
+              </p>
+            </div>
 
             <FormField
               label="이용 시간"
