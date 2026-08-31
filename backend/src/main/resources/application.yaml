@@ -27,7 +27,7 @@ jwt:
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION}
 
 websocket:
-  allowed-origins: ${FRONTEND_ORIGIN:http://localhost:3000}
+  allowed-origins: ${FRONTEND_ORIGIN:http://localhost:5173}
 
 aws:
   region: ${AWS_REGION:ap-northeast-2}
