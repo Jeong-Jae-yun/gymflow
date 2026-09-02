@@ -36,6 +36,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -43,6 +45,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ReservationService {
+
+    private static final Set<ErrorCode> RESERVATION_CONFLICT_ERROR_CODES = EnumSet.of(
+            ErrorCode.RESERVATION_IN_PROGRESS,
+            ErrorCode.RESERVATION_TIME_CONFLICT,
+            ErrorCode.RESERVATION_PROMOTION_RESERVED);
 
     private final ReservationRepository reservationRepository;
     private final ResourceRepository resourceRepository;
@@ -55,9 +62,28 @@ public class ReservationService {
     private final PromotionService promotionService;
     private final PromotionProcessor promotionProcessor;
     private final TransactionAwareLockReleaser lockReleaser;
+    private final ReservationMetrics reservationMetrics;
 
     @Transactional
     public ReservationResponse createReservation(ReservationCreateRequest request) {
+        try {
+            ReservationResponse response = doCreateReservation(request);
+            reservationMetrics.recordCreated();
+            return response;
+        } catch (BusinessException e) {
+            if (RESERVATION_CONFLICT_ERROR_CODES.contains(e.getErrorCode())) {
+                reservationMetrics.recordConflict();
+            } else {
+                reservationMetrics.recordFailed();
+            }
+            throw e;
+        } catch (RuntimeException e) {
+            reservationMetrics.recordFailed();
+            throw e;
+        }
+    }
+
+    private ReservationResponse doCreateReservation(ReservationCreateRequest request) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         Long resourceId = request.resourceId();
 

@@ -112,6 +112,9 @@ class ReservationServiceTest {
     @Mock
     private TransactionAwareLockReleaser lockReleaser;
 
+    @Mock
+    private ReservationMetrics reservationMetrics;
+
     @InjectMocks
     private ReservationService reservationService;
 
@@ -206,6 +209,9 @@ class ReservationServiceTest {
         assertThat(response.endAt()).isEqualTo(startAt.plusMinutes(30));
         verify(reservationSlotLockRepository).tryLockAll(RESOURCE_ID, startAt, startAt.plusMinutes(30));
         verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
+        verify(reservationMetrics).recordCreated();
+        verify(reservationMetrics, never()).recordConflict();
+        verify(reservationMetrics, never()).recordFailed();
     }
 
     @Test
@@ -228,6 +234,9 @@ class ReservationServiceTest {
 
         verify(reservationRepository, never()).save(any(Reservation.class));
         verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
+        verify(reservationMetrics).recordConflict();
+        verify(reservationMetrics, never()).recordCreated();
+        verify(reservationMetrics, never()).recordFailed();
     }
 
     @Test
@@ -315,6 +324,9 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_FOUND);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationMetrics).recordFailed();
+        verify(reservationMetrics, never()).recordCreated();
+        verify(reservationMetrics, never()).recordConflict();
     }
 
     @Test
@@ -333,6 +345,8 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_ACTIVE);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationMetrics).recordFailed();
+        verify(reservationMetrics, never()).recordConflict();
     }
 
     @Test
@@ -355,6 +369,8 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESERVATION_POLICY_NOT_FOUND);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationMetrics).recordFailed();
+        verify(reservationMetrics, never()).recordConflict();
     }
 
     @Test
@@ -372,6 +388,8 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_RESERVATION_DURATION);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationMetrics).recordFailed();
+        verify(reservationMetrics, never()).recordConflict();
     }
 
     @Test
@@ -389,6 +407,8 @@ class ReservationServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.INVALID_RESERVATION_DURATION);
 
         verify(reservationRepository, never()).save(any(Reservation.class));
+        verify(reservationMetrics).recordFailed();
+        verify(reservationMetrics, never()).recordConflict();
     }
 
     @ParameterizedTest
@@ -412,6 +432,8 @@ class ReservationServiceTest {
         verify(reservationRepository, never()).save(any(Reservation.class));
         // existsOverlapping이 실제 충돌을 판단했더라도 Lock은 finally에서 반드시 해제되어야 한다
         verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
+        verify(reservationMetrics).recordConflict();
+        verify(reservationMetrics, never()).recordFailed();
     }
 
     @Test
@@ -456,6 +478,8 @@ class ReservationServiceTest {
         verify(reservationRepository, never()).save(any(Reservation.class));
         // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
         verify(reservationSlotLockRepository, never()).unlockAll(any());
+        verify(reservationMetrics).recordConflict();
+        verify(reservationMetrics, never()).recordFailed();
     }
 
     @Test
@@ -477,6 +501,8 @@ class ReservationServiceTest {
         verify(reservationRepository, never()).save(any(Reservation.class));
         // Lock을 획득하지 못했으므로 소유하지 않은 Lock을 해제하려 시도해서는 안 된다
         verify(resourceAvailabilityLockRepository, never()).unlock(any(), any());
+        verify(reservationMetrics).recordConflict();
+        verify(reservationMetrics, never()).recordFailed();
     }
 
     @Test
@@ -523,6 +549,9 @@ class ReservationServiceTest {
                 .isInstanceOf(RuntimeException.class);
 
         verify(reservationSlotLockRepository).unlockAll(LOCK_HANDLE);
+        verify(reservationMetrics).recordFailed();
+        verify(reservationMetrics, never()).recordCreated();
+        verify(reservationMetrics, never()).recordConflict();
     }
 
     @Test
@@ -676,6 +705,7 @@ class ReservationServiceTest {
                 .isInstanceOf(RuntimeException.class);
 
         verify(resourceRankingRedisRepository, never()).incrementReservationCount(any());
+        verify(reservationMetrics).recordFailed();
     }
 
     @Test
