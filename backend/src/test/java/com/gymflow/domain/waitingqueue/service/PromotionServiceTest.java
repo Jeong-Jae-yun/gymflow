@@ -97,6 +97,9 @@ class PromotionServiceTest {
     @Mock
     private PromotionProcessor promotionProcessor;
 
+    @Mock
+    private PromotionMetrics promotionMetrics;
+
     @InjectMocks
     private PromotionService promotionService;
 
@@ -227,6 +230,7 @@ class PromotionServiceTest {
         verify(promotionOfferedRepository).remove(PROMOTION_ID);
         verify(promotionCheckInRepository).register(eq(9001L), eq(Duration.ofMinutes(1)));
         verify(promotionLockRepository).unlock(eq(RESOURCE_ID), eq(START_AT), eq(END_AT), eq("lock-token"));
+        verify(promotionMetrics).recordAccepted();
     }
 
     @Test
@@ -240,6 +244,7 @@ class PromotionServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PROMOTION_NOT_FOUND);
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
+        verify(promotionMetrics, never()).recordAccepted();
     }
 
     @Test
@@ -260,6 +265,7 @@ class PromotionServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PROMOTION_NOT_OFFERED);
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
+        verify(promotionMetrics, never()).recordAccepted();
     }
 
     @Test
@@ -279,6 +285,7 @@ class PromotionServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PROMOTION_EXPIRED);
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
+        verify(promotionMetrics, never()).recordAccepted();
     }
 
     @Test
@@ -304,6 +311,7 @@ class PromotionServiceTest {
         assertThat(promotion.getStatus()).isEqualTo(PromotionStatus.OFFERED);
         verify(reservationRepository, never()).save(any(Reservation.class));
         verify(promotionLockRepository).unlock(eq(RESOURCE_ID), eq(START_AT), eq(END_AT), eq("lock-token"));
+        verify(promotionMetrics, never()).recordAccepted();
     }
 
     @Test
@@ -329,6 +337,7 @@ class PromotionServiceTest {
         verify(promotionLockRepository, never()).unlock(any(), any(), any(), any());
         // ResourceAvailabilityLock은 이미 획득했으므로 반드시 해제되어야 한다
         verify(resourceAvailabilityLockRepository).unlock(RESOURCE_ID, "availability-lock-token");
+        verify(promotionMetrics, never()).recordAccepted();
     }
 
     @Test
@@ -352,6 +361,7 @@ class PromotionServiceTest {
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
         verify(reservationRepository, never()).save(any(Reservation.class));
         verify(resourceAvailabilityLockRepository, never()).unlock(any(), any());
+        verify(promotionMetrics, never()).recordAccepted();
     }
 
     @Test
@@ -410,6 +420,34 @@ class PromotionServiceTest {
         // ReservationSlotLock을 획득하지 못했더라도 이미 획득한 PromotionLock은 반드시 해제되어야 한다
         verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, END_AT, "lock-token");
         verify(reservationSlotLockRepository, never()).unlockAll(any());
+        verify(promotionMetrics, never()).recordAccepted();
+    }
+
+    @Test
+    @DisplayName("Promotion 상태 전이 이후 Reservation 생성이 실패하면 accepted counter는 증가하지 않고 예외가 그대로 전파된다")
+    void accept_WithReservationSaveFailure_ShouldNotRecordAcceptedAndPropagateException() {
+        // given
+        Resource resource = resourceWithPolicy(10);
+        User currentUser = user(CURRENT_USER_ID);
+        WaitingQueue waitingQueue = waitingQueue(WAITING_QUEUE_ID, currentUser, resource, WaitingQueueStatus.PROMOTED);
+        WaitingQueuePromotion promotion =
+                offeredPromotion(PROMOTION_ID, waitingQueue, currentUser, resource, LocalDateTime.now().plusMinutes(1));
+
+        when(promotionRepository.findByIdAndUserId(PROMOTION_ID, CURRENT_USER_ID)).thenReturn(Optional.of(promotion));
+        when(promotionRepository.findById(PROMOTION_ID)).thenReturn(Optional.of(promotion));
+        when(reservationRepository.existsOverlapping(
+                RESOURCE_ID, ReservationStatus.OCCUPYING_STATUSES, START_AT, END_AT)).thenReturn(false);
+        doThrow(new RuntimeException("DB 저장 실패"))
+                .when(reservationRepository).save(any(Reservation.class));
+
+        // when & then: Promotion.accept()로 메모리상 상태는 ACCEPTED로 바뀌었더라도,
+        // Reservation 저장에 실패하면 예외가 그대로 전파되고 accepted counter는 기록되지 않아야 한다
+        // (실제 운영에서는 @Transactional 롤백으로 Promotion.status 변경 자체도 커밋되지 않는다)
+        assertThatThrownBy(() -> promotionService.accept(PROMOTION_ID))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("DB 저장 실패");
+
+        verify(promotionMetrics, never()).recordAccepted();
     }
 
     // ===================== reject =====================
@@ -439,6 +477,7 @@ class PromotionServiceTest {
         verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, END_AT, "lock-token");
         verify(lockReleaser).register(any());
         verify(promotionProcessor).tryPromote(RESOURCE_ID, START_AT, END_AT);
+        verify(promotionMetrics).recordRejected();
     }
 
     @Test
@@ -452,6 +491,7 @@ class PromotionServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PROMOTION_NOT_FOUND);
         verify(promotionProcessor, never()).tryPromote(any(), any(), any());
+        verify(promotionMetrics, never()).recordRejected();
     }
 
     @Test
@@ -473,6 +513,7 @@ class PromotionServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PROMOTION_NOT_OFFERED);
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
         verify(promotionProcessor, never()).tryPromote(any(), any(), any());
+        verify(promotionMetrics, never()).recordRejected();
     }
 
     // ===================== checkInPromotedReservation =====================
@@ -775,6 +816,7 @@ class PromotionServiceTest {
         verify(promotionLockRepository).unlock(RESOURCE_ID, START_AT, END_AT, "lock-token");
         verify(lockReleaser).register(any());
         verify(promotionProcessor).tryPromote(RESOURCE_ID, START_AT, END_AT);
+        verify(promotionMetrics).recordExpired();
     }
 
     @Test
@@ -797,6 +839,7 @@ class PromotionServiceTest {
         assertThat(promotion.getStatus()).isEqualTo(PromotionStatus.ACCEPTED);
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
         verify(promotionProcessor, never()).tryPromote(any(), any(), any());
+        verify(promotionMetrics, never()).recordExpired();
     }
 
     @Test
@@ -810,6 +853,7 @@ class PromotionServiceTest {
 
         verify(promotionLockRepository, never()).tryLock(any(), any(), any());
         verify(promotionProcessor, never()).tryPromote(any(), any(), any());
+        verify(promotionMetrics, never()).recordExpired();
     }
 
     @Test
