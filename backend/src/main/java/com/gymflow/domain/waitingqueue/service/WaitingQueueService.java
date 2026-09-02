@@ -45,6 +45,7 @@ public class WaitingQueueService {
     private final WaitingQueueRegistrationLockRepository waitingQueueRegistrationLockRepository;
     private final WaitingQueuePromotionRepository waitingQueuePromotionRepository;
     private final TransactionAwareLockReleaser lockReleaser;
+    private final WaitingQueueMetrics waitingQueueMetrics;
 
     @Transactional
     public WaitingQueueResponse registerWaitingQueue(WaitingQueueCreateRequest request) {
@@ -92,6 +93,7 @@ public class WaitingQueueService {
                     .build();
 
             WaitingQueue savedWaitingQueue = waitingQueueRepository.save(waitingQueue);
+            waitingQueueMetrics.recordJoined();
 
             Long waitingRank = registerToRedisAndGetRank(savedWaitingQueue);
 
@@ -122,6 +124,7 @@ public class WaitingQueueService {
         }
 
         waitingQueue.cancel();
+        waitingQueueMetrics.recordCancelled();
         removeFromRedis(waitingQueue);
     }
 
