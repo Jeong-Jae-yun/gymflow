@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: GymFlow
+    orgId: 1
+    folder: GymFlow
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
