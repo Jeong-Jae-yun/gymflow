@@ -1,6 +1,7 @@
 package com.gymflow.domain.waitingqueue.domain.redis;
 
 import com.gymflow.domain.waitingqueue.domain.websocket.WaitingQueueDestination;
+import com.gymflow.global.websocket.WebSocketMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
@@ -19,13 +20,16 @@ public class WaitingQueueEventSubscriber implements MessageListener {
 
     private final ObjectMapper objectMapper;
     private final SimpMessagingTemplate messagingTemplate;
+    private final WebSocketMetrics webSocketMetrics;
 
     public WaitingQueueEventSubscriber(
             RedisMessageListenerContainer listenerContainer,
             ObjectMapper objectMapper,
-            SimpMessagingTemplate messagingTemplate) {
+            SimpMessagingTemplate messagingTemplate,
+            WebSocketMetrics webSocketMetrics) {
         this.objectMapper = objectMapper;
         this.messagingTemplate = messagingTemplate;
+        this.webSocketMetrics = webSocketMetrics;
         listenerContainer.addMessageListener(
                 this, new ChannelTopic(WaitingQueueEventChannel.WAITING_QUEUE_EVENT));
     }
@@ -42,8 +46,10 @@ public class WaitingQueueEventSubscriber implements MessageListener {
             log.info("WaitingQueue promoted event received. waitingQueueId={}", event.waitingQueueId());
             messagingTemplate.convertAndSendToUser(
                     String.valueOf(event.userId()), WaitingQueueDestination.WAITING_QUEUE_QUEUE, event);
+            webSocketMetrics.recordNotificationSent();
         } catch (RuntimeException e) {
             log.warn("WaitingQueue promoted event 처리에 실패했습니다. payload={}", payload, e);
+            webSocketMetrics.recordNotificationFailed();
         }
     }
 }
