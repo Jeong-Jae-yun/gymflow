@@ -111,12 +111,12 @@ jobs:
           echo "== backend recent logs =="
           BACKEND_IMAGE="\${IMAGE}" docker compose --env-file .env.prod -f compose.prod.yaml logs --tail=80 backend
 
-          echo "== smoke test: GET /actuator/health via nginx (expect HTTP 401; endpoint requires auth, 401 proves the app booted and the security filter chain is serving requests) =="
+          echo "== smoke test: GET /actuator/health via nginx (expect HTTP 200) =="
           SMOKE_OK=0
           for i in \$(seq 1 10); do
             STATUS=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/actuator/health || echo "000")
             echo "attempt \${i}: HTTP \${STATUS}"
-            if [ "\${STATUS}" = "401" ]; then
+            if [ "\${STATUS}" = "200" ]; then
               SMOKE_OK=1
               break
             fi
@@ -124,7 +124,7 @@ jobs:
           done
 
           if [ "\${SMOKE_OK}" -ne 1 ]; then
-            echo "SMOKE TEST FAILED: /actuator/health did not return expected HTTP 401 after 10 attempts"
+            echo "SMOKE TEST FAILED: /actuator/health did not return expected HTTP 200 after 10 attempts"
             exit 1
           fi
 
