@@ -172,7 +172,7 @@ class WaitingQueueServiceTest {
         stubNoDuplicateAndUnavailable();
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
-        when(waitingQueueRedisRepository.rank(eq(100L), eq(RESOURCE_ID), eq(START_AT)))
+        when(waitingQueueRedisRepository.addAndGetRank(eq(100L), eq(RESOURCE_ID), eq(START_AT)))
                 .thenReturn(Optional.of(1L));
 
         // when
@@ -185,7 +185,7 @@ class WaitingQueueServiceTest {
         assertThat(response.endAt()).isEqualTo(END_AT);
         assertThat(response.status()).isEqualTo(WaitingQueueStatus.WAITING);
         assertThat(response.waitingRank()).isEqualTo(2L);
-        verify(waitingQueueRedisRepository).add(eq(100L), eq(RESOURCE_ID), eq(START_AT), any());
+        verify(waitingQueueRedisRepository).addAndGetRank(eq(100L), eq(RESOURCE_ID), eq(START_AT));
         verify(waitingQueueRegistrationLockRepository).tryLock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT);
         verify(waitingQueueRegistrationLockRepository)
                 .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
@@ -203,7 +203,7 @@ class WaitingQueueServiceTest {
         when(userRepository.getReferenceById(CURRENT_USER_ID)).thenReturn(user());
         stubSave();
         doThrow(new RedisConnectionFailureException("연결 실패"))
-                .when(waitingQueueRedisRepository).add(eq(100L), eq(RESOURCE_ID), eq(START_AT), any());
+                .when(waitingQueueRedisRepository).addAndGetRank(eq(100L), eq(RESOURCE_ID), eq(START_AT));
 
         // when
         WaitingQueueResponse response = waitingQueueService.registerWaitingQueue(request);
@@ -287,7 +287,7 @@ class WaitingQueueServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_ALREADY_EXISTS);
 
         verify(waitingQueueRepository, never()).save(any(WaitingQueue.class));
-        verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
+        verify(waitingQueueRedisRepository, never()).addAndGetRank(any(), any(), any());
         verify(waitingQueueRegistrationLockRepository)
                 .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
         verify(waitingQueueMetrics, never()).recordJoined();
@@ -332,7 +332,7 @@ class WaitingQueueServiceTest {
         verify(waitingQueueRepository, never())
                 .existsByUserIdAndResourceIdAndStartAtAndEndAtAndStatus(any(), any(), any(), any(), any());
         verify(waitingQueueRepository, never()).save(any(WaitingQueue.class));
-        verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
+        verify(waitingQueueRedisRepository, never()).addAndGetRank(any(), any(), any());
         verify(waitingQueueRegistrationLockRepository, never()).unlock(any(), any(), any(), any(), any());
     }
 
@@ -353,7 +353,7 @@ class WaitingQueueServiceTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("DB 저장 실패");
 
-        verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
+        verify(waitingQueueRedisRepository, never()).addAndGetRank(any(), any(), any());
         verify(waitingQueueRegistrationLockRepository)
                 .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
         verify(waitingQueueMetrics, never()).recordJoined();
