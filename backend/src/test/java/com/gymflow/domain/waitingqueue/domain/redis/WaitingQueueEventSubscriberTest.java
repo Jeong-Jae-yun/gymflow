@@ -1,6 +1,8 @@
 package com.gymflow.domain.waitingqueue.domain.redis;
 
 import com.gymflow.domain.waitingqueue.domain.websocket.WaitingQueueDestination;
+import com.gymflow.global.websocket.WebSocketMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,11 +38,16 @@ class WaitingQueueEventSubscriberTest {
     @Mock
     private SimpMessagingTemplate messagingTemplate;
 
+    private SimpleMeterRegistry meterRegistry;
+    private WebSocketMetrics webSocketMetrics;
     private WaitingQueueEventSubscriber subscriber;
 
     @BeforeEach
     void setUp() {
-        subscriber = new WaitingQueueEventSubscriber(new RedisMessageListenerContainer(), objectMapper, messagingTemplate);
+        meterRegistry = new SimpleMeterRegistry();
+        webSocketMetrics = new WebSocketMetrics(meterRegistry);
+        subscriber = new WaitingQueueEventSubscriber(
+                new RedisMessageListenerContainer(), objectMapper, messagingTemplate, webSocketMetrics);
     }
 
     private Message message(String body) {
@@ -77,6 +84,8 @@ class WaitingQueueEventSubscriberTest {
         assertThat(destinationCaptor.getValue()).isEqualTo("/queue/waiting-queue");
         assertThat(payloadCaptor.getValue()).isEqualTo(event);
         assertThat(((WaitingQueuePromotedEvent) payloadCaptor.getValue()).promotionId()).isEqualTo(500L);
+        assertThat(meterRegistry.get("gymflow_websocket_notification_sent_total").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("gymflow_websocket_notification_failed_total").counter().count()).isEqualTo(0.0);
     }
 
     @Test
@@ -86,6 +95,8 @@ class WaitingQueueEventSubscriberTest {
         assertThatCode(() -> subscriber.onMessage(message("{invalid-json"), null))
                 .doesNotThrowAnyException();
         verify(messagingTemplate, never()).convertAndSendToUser(anyString(), anyString(), any());
+        assertThat(meterRegistry.get("gymflow_websocket_notification_failed_total").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("gymflow_websocket_notification_sent_total").counter().count()).isEqualTo(0.0);
     }
 
     @Test
@@ -105,6 +116,8 @@ class WaitingQueueEventSubscriberTest {
         // when & then
         assertThatCode(() -> subscriber.onMessage(emptyMessage, null)).doesNotThrowAnyException();
         verify(messagingTemplate, never()).convertAndSendToUser(anyString(), anyString(), any());
+        assertThat(meterRegistry.get("gymflow_websocket_notification_sent_total").counter().count()).isEqualTo(0.0);
+        assertThat(meterRegistry.get("gymflow_websocket_notification_failed_total").counter().count()).isEqualTo(0.0);
     }
 
     @Test
@@ -119,5 +132,7 @@ class WaitingQueueEventSubscriberTest {
 
         // when & then
         assertThatCode(() -> subscriber.onMessage(message(json), null)).doesNotThrowAnyException();
+        assertThat(meterRegistry.get("gymflow_websocket_notification_failed_total").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("gymflow_websocket_notification_sent_total").counter().count()).isEqualTo(0.0);
     }
 }

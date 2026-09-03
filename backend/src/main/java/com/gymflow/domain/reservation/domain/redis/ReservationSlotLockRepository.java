@@ -1,6 +1,7 @@
 package com.gymflow.domain.reservation.domain.redis;
 
 import com.gymflow.domain.reservation.domain.redis.ReservationSlotLockHandle.SlotLock;
+import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -25,15 +26,17 @@ public class ReservationSlotLockRepository {
 
     private final StringRedisTemplate redisTemplate;
     private final Duration lockTtl;
+    private final ReservationLockMetrics lockMetrics;
 
     @Autowired
-    public ReservationSlotLockRepository(StringRedisTemplate redisTemplate) {
-        this(redisTemplate, DEFAULT_LOCK_TTL);
+    public ReservationSlotLockRepository(StringRedisTemplate redisTemplate, ReservationLockMetrics lockMetrics) {
+        this(redisTemplate, DEFAULT_LOCK_TTL, lockMetrics);
     }
 
-    ReservationSlotLockRepository(StringRedisTemplate redisTemplate, Duration lockTtl) {
+    ReservationSlotLockRepository(StringRedisTemplate redisTemplate, Duration lockTtl, ReservationLockMetrics lockMetrics) {
         this.redisTemplate = redisTemplate;
         this.lockTtl = lockTtl;
+        this.lockMetrics = lockMetrics;
     }
 
     public Optional<ReservationSlotLockHandle> tryLockAll(Long resourceId, LocalDateTime startAt, LocalDateTime endAt) {
@@ -57,10 +60,17 @@ public class ReservationSlotLockRepository {
     private Optional<SlotLock> tryLockSlot(Long resourceId, LocalDateTime slot) {
         String key = ReservationSlotLockKey.from(resourceId, slot);
         String lockToken = UUID.randomUUID().toString();
+        Timer.Sample sample = lockMetrics.startTimer();
         try {
             Boolean acquired = redisTemplate.opsForValue().setIfAbsent(key, lockToken, lockTtl);
-            return Boolean.TRUE.equals(acquired) ? Optional.of(new SlotLock(key, lockToken)) : Optional.empty();
+            if (Boolean.TRUE.equals(acquired)) {
+                lockMetrics.recordAcquired(sample);
+                return Optional.of(new SlotLock(key, lockToken));
+            }
+            lockMetrics.recordFailed(sample);
+            return Optional.empty();
         } catch (RuntimeException e) {
+            lockMetrics.recordFailed(sample);
             log.error("Reservation Slot Lock 획득에 실패했습니다. key={}", key, e);
             return Optional.empty();
         }

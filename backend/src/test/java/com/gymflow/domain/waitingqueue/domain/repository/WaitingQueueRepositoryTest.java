@@ -250,6 +250,47 @@ class WaitingQueueRepositoryTest {
     }
 
     @Test
+    @DisplayName("countByStatus(WAITING)은 CANCELLED/PROMOTED를 제외하고 실제 WAITING 상태인 대기열 수만 반환한다")
+    void countByStatus_ShouldReturnOnlyWaitingCount() {
+        // given
+        User user = persistUser("owner@gymflow.com");
+        Resource resource = persistResource("Chest Press A-1");
+        WaitingQueue waiting1 = WaitingQueue.builder()
+                .user(user).resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 14, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 14, 15))
+                .build();
+        WaitingQueue waiting2 = WaitingQueue.builder()
+                .user(user).resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 15, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 15, 15))
+                .build();
+        WaitingQueue cancelled = WaitingQueue.builder()
+                .user(user).resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 16, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 16, 15))
+                .build();
+        cancelled.cancel();
+        WaitingQueue promoted = WaitingQueue.builder()
+                .user(user).resource(resource)
+                .startAt(LocalDateTime.of(2026, 8, 12, 17, 0))
+                .endAt(LocalDateTime.of(2026, 8, 12, 17, 15))
+                .build();
+        promoted.promote();
+        waitingQueueRepository.save(waiting1);
+        waitingQueueRepository.save(waiting2);
+        waitingQueueRepository.save(cancelled);
+        waitingQueueRepository.save(promoted);
+        entityManager.flush();
+
+        // when
+        long waitingCount = waitingQueueRepository.countByStatus(WaitingQueueStatus.WAITING);
+
+        // then
+        assertThat(waitingCount).isEqualTo(2L);
+    }
+
+    @Test
     @DisplayName("CONFIRMED 예약과 시간이 겹치면 Reservation.existsOverlapping은 true를 반환하여 대기열 등록 대상이 된다")
     void existsOverlapping_WithConflictingConfirmedReservation_ShouldReturnTrue() {
         // given

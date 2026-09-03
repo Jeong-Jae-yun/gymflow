@@ -45,6 +45,7 @@ public class PromotionProcessor {
     private final PromotionOfferedRepository promotionOfferedRepository;
     private final WaitingQueueEventPublisher waitingQueueEventPublisher;
     private final TransactionAwareLockReleaser lockReleaser;
+    private final WaitingQueueMetrics waitingQueueMetrics;
 
     @Transactional
     public void tryPromote(Long resourceId, LocalDateTime startAt, LocalDateTime endAt) {
@@ -123,6 +124,7 @@ public class PromotionProcessor {
                             .expiresAt(now.plus(ttl))
                             .build();
                     WaitingQueuePromotion saved = promotionRepository.save(promotion);
+                    waitingQueueMetrics.recordPromoted();
 
                     removeFromWaitingQueueRedis(candidate.getId(), resourceId, startAt);
                     registerOfferedTtl(saved.getId(), ttl);

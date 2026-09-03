@@ -22,4 +22,6 @@ public interface WaitingQueueRepository extends JpaRepository<WaitingQueue, Long
             LocalDateTime endAt,
             WaitingQueueStatus status
     );
+
+    long countByStatus(WaitingQueueStatus status);
 }

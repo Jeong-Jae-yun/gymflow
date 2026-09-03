@@ -95,6 +95,9 @@ class PromotionProcessorTest {
     @Mock
     private TransactionAwareLockReleaser lockReleaser;
 
+    @Mock
+    private WaitingQueueMetrics waitingQueueMetrics;
+
     @InjectMocks
     private PromotionProcessor promotionProcessor;
 
@@ -189,6 +192,7 @@ class PromotionProcessorTest {
                 .isEqualTo(captor.getValue().getId());
         assertThat(eventCaptor.getValue().waitingQueueId()).isEqualTo(WAITING_QUEUE_ID);
         verify(promotionLockRepository).unlock(eq(RESOURCE_ID), eq(START_AT), eq(endAt), eq("lock-token"));
+        verify(waitingQueueMetrics).recordPromoted();
     }
 
     @Test
@@ -209,6 +213,7 @@ class PromotionProcessorTest {
         verify(waitingQueueRepository, never()).findById(any());
         verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
         verify(promotionLockRepository).unlock(eq(RESOURCE_ID), eq(START_AT), eq(endAt), eq("lock-token"));
+        verify(waitingQueueMetrics, never()).recordPromoted();
     }
 
     @Test
@@ -297,6 +302,7 @@ class PromotionProcessorTest {
         // then
         verify(promotionRepository, never()).save(any(WaitingQueuePromotion.class));
         verify(waitingQueueEventPublisher, never()).publish(any());
+        verify(waitingQueueMetrics, never()).recordPromoted();
     }
 
     @Test

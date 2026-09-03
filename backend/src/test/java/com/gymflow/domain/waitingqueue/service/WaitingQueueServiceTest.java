@@ -87,6 +87,9 @@ class WaitingQueueServiceTest {
     @Mock
     private TransactionAwareLockReleaser lockReleaser;
 
+    @Mock
+    private WaitingQueueMetrics waitingQueueMetrics;
+
     @InjectMocks
     private WaitingQueueService waitingQueueService;
 
@@ -186,6 +189,7 @@ class WaitingQueueServiceTest {
         verify(waitingQueueRegistrationLockRepository).tryLock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT);
         verify(waitingQueueRegistrationLockRepository)
                 .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
+        verify(waitingQueueMetrics).recordJoined();
     }
 
     @Test
@@ -210,6 +214,7 @@ class WaitingQueueServiceTest {
         verify(waitingQueueRepository).save(any(WaitingQueue.class));
         verify(waitingQueueRegistrationLockRepository)
                 .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
+        verify(waitingQueueMetrics).recordJoined();
     }
 
     @Test
@@ -225,6 +230,7 @@ class WaitingQueueServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.RESOURCE_NOT_FOUND);
 
         verify(waitingQueueRepository, never()).save(any(WaitingQueue.class));
+        verify(waitingQueueMetrics, never()).recordJoined();
     }
 
     @Test
@@ -284,6 +290,7 @@ class WaitingQueueServiceTest {
         verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
         verify(waitingQueueRegistrationLockRepository)
                 .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
+        verify(waitingQueueMetrics, never()).recordJoined();
     }
 
     @Test
@@ -349,6 +356,7 @@ class WaitingQueueServiceTest {
         verify(waitingQueueRedisRepository, never()).add(any(), any(), any(), any());
         verify(waitingQueueRegistrationLockRepository)
                 .unlock(CURRENT_USER_ID, RESOURCE_ID, START_AT, END_AT, LOCK_TOKEN);
+        verify(waitingQueueMetrics, never()).recordJoined();
     }
 
     @Test
@@ -524,6 +532,7 @@ class WaitingQueueServiceTest {
         // then
         assertThat(waitingQueue.getStatus()).isEqualTo(WaitingQueueStatus.CANCELLED);
         verify(waitingQueueRedisRepository).remove(100L, RESOURCE_ID, START_AT);
+        verify(waitingQueueMetrics).recordCancelled();
     }
 
     @Test
@@ -581,6 +590,8 @@ class WaitingQueueServiceTest {
         assertThatThrownBy(() -> waitingQueueService.cancelWaitingQueue(100L))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_NOT_CANCELLABLE);
+
+        verify(waitingQueueMetrics, never()).recordCancelled();
     }
 
     @Test
@@ -596,6 +607,8 @@ class WaitingQueueServiceTest {
         assertThatThrownBy(() -> waitingQueueService.cancelWaitingQueue(100L))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ErrorCode.WAITING_QUEUE_NOT_CANCELLABLE);
+
+        verify(waitingQueueMetrics, never()).recordCancelled();
     }
 
     @Test

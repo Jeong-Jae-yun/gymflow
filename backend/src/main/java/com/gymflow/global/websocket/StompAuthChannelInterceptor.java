@@ -19,6 +19,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final WebSocketMetrics webSocketMetrics;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -27,6 +28,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
         if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
             String token = resolveToken(accessor);
             if (token == null || !jwtTokenProvider.validateToken(token)) {
+                webSocketMetrics.recordConnectFailed();
                 throw new MessagingException("유효하지 않은 WebSocket 인증 정보입니다.");
             }
             accessor.setUser(new StompPrincipal(String.valueOf(jwtTokenProvider.getUserId(token))));

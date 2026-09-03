@@ -36,3 +36,12 @@ aws:
   region: ${AWS_REGION:ap-northeast-2}
   s3:
     resource-image-bucket: ${S3_RESOURCE_IMAGE_BUCKET:gymflow-resource-images}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: never

@@ -1,6 +1,7 @@
 package com.gymflow.domain.reservation.domain.redis;
 
 import com.gymflow.TestcontainersConfiguration;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,6 +36,8 @@ class ReservationSlotLockRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     private ReservationSlotLockRepository repository;
+    private ReservationLockMetrics lockMetrics;
+    private SimpleMeterRegistry meterRegistry;
 
     private static LocalDateTime at(int hour, int minute) {
         return LocalDateTime.of(2026, 8, 20, hour, minute);
@@ -42,7 +45,9 @@ class ReservationSlotLockRepositoryTest {
 
     @BeforeEach
     void setUp() {
-        repository = new ReservationSlotLockRepository(redisTemplate);
+        meterRegistry = new SimpleMeterRegistry();
+        lockMetrics = new ReservationLockMetrics(meterRegistry);
+        repository = new ReservationSlotLockRepository(redisTemplate, lockMetrics);
     }
 
     @AfterEach
@@ -69,6 +74,8 @@ class ReservationSlotLockRepositoryTest {
         assertThat(redisTemplate.hasKey(ReservationSlotLockKey.from(RESOURCE_ID, at(14, 0)))).isTrue();
         assertThat(redisTemplate.hasKey(ReservationSlotLockKey.from(RESOURCE_ID, at(14, 5)))).isTrue();
         assertThat(redisTemplate.hasKey(ReservationSlotLockKey.from(RESOURCE_ID, at(14, 10)))).isTrue();
+        assertThat(meterRegistry.get("gymflow_lock_acquired_total").counter().count()).isEqualTo(3.0);
+        assertThat(meterRegistry.get("gymflow_lock_wait_seconds").timer().count()).isEqualTo(3L);
     }
 
     @Test
@@ -116,6 +123,10 @@ class ReservationSlotLockRepositoryTest {
         Optional<ReservationSlotLockHandle> reacquire = repository.tryLockAll(RESOURCE_ID, at(13, 50), at(14, 0));
         assertThat(reacquire).isPresent();
         assertThat(reacquire.get().slotLocks()).hasSize(2);
+
+        // then: A(3슬롯) + B의 부분 성공(2슬롯) + 재획득(2슬롯) = 7건의 성공, 마지막 충돌 슬롯 1건의 실패가 기록된다
+        assertThat(meterRegistry.get("gymflow_lock_acquired_total").counter().count()).isEqualTo(7.0);
+        assertThat(meterRegistry.get("gymflow_lock_failed_total").counter().count()).isEqualTo(1.0);
     }
 
     @Test
@@ -154,7 +165,7 @@ class ReservationSlotLockRepositoryTest {
     @DisplayName("TTL이 지나면 슬롯 Lock이 자동으로 해제되어 다시 획득할 수 있다")
     void tryLockAll_AfterTtlExpires_ShouldSucceedAgain() throws InterruptedException {
         // given
-        ReservationSlotLockRepository shortTtlRepository = new ReservationSlotLockRepository(redisTemplate, Duration.ofMillis(300));
+        ReservationSlotLockRepository shortTtlRepository = new ReservationSlotLockRepository(redisTemplate, Duration.ofMillis(300), lockMetrics);
         Optional<ReservationSlotLockHandle> first = shortTtlRepository.tryLockAll(RESOURCE_ID, at(14, 0), at(14, 10));
         assertThat(first).isPresent();
 
@@ -178,7 +189,7 @@ class ReservationSlotLockRepositoryTest {
         doThrow(new RedisConnectionFailureException("연결 실패"))
                 .when(spyValueOperations).setIfAbsent(eq(failingKey), anyString(), any(Duration.class));
         when(spyTemplate.opsForValue()).thenReturn(spyValueOperations);
-        ReservationSlotLockRepository faultyRepository = new ReservationSlotLockRepository(spyTemplate);
+        ReservationSlotLockRepository faultyRepository = new ReservationSlotLockRepository(spyTemplate, lockMetrics);
 
         // when: 14:00~14:15는 14:00,14:05,14:10 세 슬롯 중 마지막에서 실패한다
         Optional<ReservationSlotLockHandle> handle = faultyRepository.tryLockAll(RESOURCE_ID, at(14, 0), at(14, 15));
@@ -189,5 +200,9 @@ class ReservationSlotLockRepositoryTest {
         assertThat(redisTemplate.hasKey(ReservationSlotLockKey.from(RESOURCE_ID, at(14, 5)))).isFalse();
         Optional<ReservationSlotLockHandle> reacquire = repository.tryLockAll(RESOURCE_ID, at(14, 0), at(14, 10));
         assertThat(reacquire).isPresent();
+
+        // then: 성공한 14:00/14:05 + 재획득 2슬롯 = 4건의 성공, 예외가 발생한 14:10 1건의 실패가 기록된다
+        assertThat(meterRegistry.get("gymflow_lock_acquired_total").counter().count()).isEqualTo(4.0);
+        assertThat(meterRegistry.get("gymflow_lock_failed_total").counter().count()).isEqualTo(1.0);
     }
 }

@@ -3,6 +3,7 @@ package com.gymflow.domain.reservation.domain.redis;
 import com.gymflow.domain.reservation.domain.entity.Reservation;
 import com.gymflow.domain.reservation.domain.enumtype.ReservationStatus;
 import com.gymflow.domain.reservation.domain.repository.ReservationRepository;
+import com.gymflow.domain.reservation.service.ReservationMetrics;
 import com.gymflow.domain.reservation.service.ReservationService;
 import com.gymflow.domain.resource.domain.entity.Resource;
 import com.gymflow.domain.resource.domain.enumtype.ResourceType;
@@ -85,6 +86,9 @@ class ReservationNoShowListenerTest {
     @Mock
     private TransactionAwareLockReleaser lockReleaser;
 
+    @Mock
+    private ReservationMetrics reservationMetrics;
+
     private ReservationNoShowListener listener;
 
     @BeforeEach
@@ -93,7 +97,7 @@ class ReservationNoShowListenerTest {
                 reservationRepository, resourceRepository, userRepository,
                 usageHistoryRepository, reservationSlotLockRepository, resourceAvailabilityLockRepository,
                 reservationNoShowRepository, resourceRankingRedisRepository, promotionService, promotionProcessor,
-                lockReleaser);
+                lockReleaser, reservationMetrics);
         listener = new ReservationNoShowListener(new RedisMessageListenerContainer(), reservationService);
     }
 

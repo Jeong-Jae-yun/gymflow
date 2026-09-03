@@ -45,6 +45,7 @@ public class PromotionService {
     private final PromotionCheckInRepository promotionCheckInRepository;
     private final TransactionAwareLockReleaser lockReleaser;
     private final PromotionProcessor promotionProcessor;
+    private final PromotionMetrics promotionMetrics;
 
     @Autowired
     @Lazy
@@ -122,6 +123,7 @@ public class PromotionService {
                     LocalDateTime checkInDeadline = now.plus(CHECK_IN_TTL);
                     registerCheckInTtl(savedReservation.getId(), CHECK_IN_TTL);
 
+                    promotionMetrics.recordAccepted();
                     return new PromotionAcceptResponse(
                             current.getId(), current.getStatus(), savedReservation.getId(), checkInDeadline);
                 } finally {
@@ -172,6 +174,7 @@ public class PromotionService {
             }
             current.reject(LocalDateTime.now());
             removeOfferedTtl(current.getId());
+            promotionMetrics.recordRejected();
         } finally {
             if (!deferred) {
                 unlockAction.run();
@@ -212,6 +215,7 @@ public class PromotionService {
                 return null;
             }
             current.expire(LocalDateTime.now());
+            promotionMetrics.recordExpired();
         } finally {
             if (!deferred) {
                 unlockAction.run();
