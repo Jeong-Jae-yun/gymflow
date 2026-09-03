@@ -630,12 +630,13 @@
             "uid": "efww8t76mqyo0b"
           },
           "editorMode": "code",
-          "expr": "100 *\r\nsum(rate(gymflow_reservation_conflict_total[5m]))\r\n/\r\nclamp_min(\r\n  (\r\n    sum(rate(gymflow_reservation_created_total[5m]))\r\n    +\r\n    sum(rate(gymflow_reservation_conflict_total[5m]))\r\n    +\r\n    sum(rate(gymflow_reservation_failed_total[5m]))\r\n  ),\r\n  1e-9\r\n)",
+          "expr": "100 *\r\nsum(rate(gymflow_reservation_conflict_total[5m]))\r\n/\r\nclamp_min(\r\n  (\r\n    sum(rate(gymflow_reservation_total[5m]))\r\n    +\r\n    sum(rate(gymflow_reservation_conflict_total[5m]))\r\n    +\r\n    sum(rate(gymflow_reservation_failed_total[5m]))\r\n  ),\r\n  1e-9\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
       ],
+      "description": "충돌률 = conflict / (success + conflict + failed) * 100. 분모가 0에 가까울 때의 0-division은 clamp_min(..., 1e-9)으로 방지함. 성공 카운터의 실제 Prometheus 노출 이름은 gymflow_reservation_total이며, 소스 코드상의 Micrometer Counter 등록명(gymflow_reservation_created_total)과 다름 - Prometheus client가 '_created' 예약 접미사를 자동으로 제거하기 때문.",
       "title": "Reservation Conflict Rate",
       "type": "timeseries"
     },
@@ -842,7 +843,8 @@
           "refId": "A"
         }
       ],
-      "title": "Average Lock Wait Time",
+      "description": "reservation-slot 락에 대해 SETNX 1회 시도를 시작한 시점부터 성공/실패가 결정될 때까지 걸린 평균 시간(gymflow_lock_wait_seconds). 재시도 없이 즉시 성공/실패하는 tryLock 방식이므로 대기열에서 기다린 시간이 아니라 락 획득 시도 자체의 지연(attempt latency)을 의미함.",
+      "title": "Lock Acquisition Attempt Latency (reservation-slot)",
       "type": "timeseries"
     },
     {
