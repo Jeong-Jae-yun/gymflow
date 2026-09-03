@@ -77,6 +77,12 @@ const TEST_PASSWORD = 'K6-Load-Test-1234!';
 // 실행마다 이메일/예약 시간이 겹치지 않도록 사용하는 run 식별자
 const RUN_ID = Date.now();
 
+// holder 예약용 slot 탐색을 시작할 날짜 offset(내일부터 며칠 뒤부터 훑을지, 1~14일 사이).
+// RUN_ID(ms)를 기반으로 실행마다 다른 값을 골라서, 연달아 실행해도 서로 다른 날짜 구간부터
+// 탐색하게 만든다 - 직전 실행이 만든 예약/WaitingQueue/Promotion 상태와 마주칠 확률을 줄인다.
+// (완전한 격리는 아니며, 실제 안전망은 findAndReserveHolderSlot의 409 skip-and-retry다.)
+const RUN_START_DAY_OFFSET = 1 + (RUN_ID % 14);
+
 // 이 스크립트가 호출하는 API들의 정상 응답 status: 200(로그인/조회/cancel/accept),
 // 201(가입/예약 생성/대기열 등록 성공), 204(대기열 취소/reject 성공), 409(대기열/예약 비즈니스
 // 충돌 - 정상적인 응답). 그 외(5xx, 네트워크 오류)만 http_req_failed 실패로 집계한다.
@@ -185,12 +191,26 @@ function pickNonOverlappingStartAts(availableSlots, duration, maxCount) {
 
 // GET /api/resources/{resourceId}/availability?date=YYYY-MM-DD 를 여러 날짜에 걸쳐 조회하며
 // 과거 실행과 겹치지 않는 미래 slot을 최대 maxNeeded개까지 모은다. (기존 스크립트들과 동일)
-function collectNonOverlappingStartAts(token, resourceId, duration, maxNeeded) {
+//
+// startDayOffset(기본 1 = "내일부터")을 바꿀 수 있게 해서, 실행마다 탐색을 시작하는 날짜 자체를
+// 흩뿌릴 수 있게 한다 - RUN_ID 기반으로 이 값을 바꾸면 서로 다른 실행이 같은 날짜부터 훑지 않으므로
+// 최근 실행이 남긴 상태와 마주칠 확률이 줄어든다(findAndReserveHolderSlot의 재시도와 함께 쓰인다).
+//
+// 주의: 여기서 available=true는 "겹치는 예약이 없다"만 의미하고, 대기열 승급 우선권
+// (RESERVATION_PROMOTION_RESERVED)까지는 반영하지 않는다(availability API는 그 정보를 모른다).
+// 그래서 이 함수가 돌려주는 후보들도 실제로는 예약 생성이 거부될 수 있다 - 그 처리는 호출부
+// (findAndReserveHolderSlot)의 몫이다.
+function collectNonOverlappingStartAts(token, resourceId, duration, maxNeeded, startDayOffset) {
     const MAX_LOOKAHEAD_DAYS = 30;
+    const firstDayOffset = startDayOffset || 1;
     const today = new Date();
     const results = [];
 
-    for (let dayOffset = 1; dayOffset <= MAX_LOOKAHEAD_DAYS && results.length < maxNeeded; dayOffset++) {
+    for (
+        let dayOffset = firstDayOffset;
+        dayOffset < firstDayOffset + MAX_LOOKAHEAD_DAYS && results.length < maxNeeded;
+        dayOffset++
+    ) {
         const candidateDate = new Date(today);
         candidateDate.setDate(candidateDate.getDate() + dayOffset);
         const dateStr = formatDate(candidateDate);
@@ -211,6 +231,67 @@ function collectNonOverlappingStartAts(token, resourceId, duration, maxNeeded) {
     }
 
     return results;
+}
+
+// holder 예약 생성 후보를 최대 HOLDER_RESERVATION_MAX_ATTEMPTS개까지 순서대로 시도한다.
+// availability API는 대기열 승급 우선권(RESERVATION_PROMOTION_RESERVED)이나, 다른 요청이
+// 동시에 같은 슬롯을 잡으려는 상황(RESERVATION_IN_PROGRESS), 그사이 다른 곳에서 실제로 예약이
+// 생성된 상황(RESERVATION_TIME_CONFLICT)을 알지 못하므로, "available=true"였던 후보도 실제
+// POST /api/reservations에서 409로 거부될 수 있다. 이런 409는 "이 slot은 지금 못 쓴다"는
+// 정상적인 신호일 뿐 setup 자체의 실패가 아니므로, 즉시 중단하지 않고 다음 후보로 넘어간다.
+// 반대로 409가 아닌 다른 예상 밖 응답(5xx 등)은 진짜 오류이므로 그 자리에서 바로 실패시킨다.
+const HOLDER_RESERVATION_MAX_ATTEMPTS = 20;
+
+function findAndReserveHolderSlot(holderToken, resourceId, duration) {
+    const candidates = collectNonOverlappingStartAts(
+        holderToken, resourceId, duration, HOLDER_RESERVATION_MAX_ATTEMPTS, RUN_START_DAY_OFFSET);
+    if (candidates.length === 0) {
+        throw new Error(
+            `[setup] Resource(id=${resourceId})에서 예약 가능한 slot 후보를 하나도 찾지 못했습니다 ` +
+                `(탐색 시작일 offset=${RUN_START_DAY_OFFSET}일).`
+        );
+    }
+
+    const skipped = [];
+    for (const startAt of candidates) {
+        const holderReservationRes = http.post(
+            `${BASE_URL}/api/reservations`,
+            JSON.stringify({ resourceId, startAt, duration }),
+            { headers: jsonHeaders(holderToken) }
+        );
+
+        if (holderReservationRes.status === 201) {
+            const holderReservationId = holderReservationRes.json('reservationId');
+            if (!holderReservationId) {
+                throw new Error(`[setup] holder 예약 응답에 reservationId가 없습니다: ${holderReservationRes.body}`);
+            }
+            if (skipped.length > 0) {
+                console.warn(
+                    `[setup] 후보 slot ${skipped.length}개를 건너뛴 뒤 startAt=${startAt}에서 holder 예약을 확보했습니다.`
+                );
+            }
+            return { startAt, holderReservationId };
+        }
+
+        if (holderReservationRes.status === 409) {
+            // RESERVATION_TIME_CONFLICT / RESERVATION_IN_PROGRESS / RESERVATION_PROMOTION_RESERVED
+            // (ErrorCode.java 기준) 모두 "이 slot은 지금 못 쓴다"는 동일한 의미로 취급해 건너뛴다.
+            const message = holderReservationRes.json('message');
+            skipped.push({ startAt, message });
+            console.warn(`[setup] holder 예약 후보 충돌로 건너뜀 - startAt=${startAt}, message="${message}"`);
+            continue;
+        }
+
+        throw new Error(
+            `[setup] holder의 선점 예약 생성 중 예상치 못한 오류 (startAt=${startAt}, ` +
+                `status=${holderReservationRes.status}): ${holderReservationRes.body}`
+        );
+    }
+
+    const reasons = skipped.map((s) => `  - ${s.startAt}: ${s.message}`).join('\n');
+    throw new Error(
+        `[setup] 후보 slot ${candidates.length}개를 모두 시도했지만 holder 예약을 생성하지 못했습니다.\n${reasons}`
+    );
 }
 
 function signUpAndLogin(index) {
@@ -278,29 +359,12 @@ export function setup() {
     const policy = activeResource.reservationPolicy;
     const duration = policy.maxDuration || policy.minDuration;
 
-    const startAts = collectNonOverlappingStartAts(holderToken, activeResource.id, duration, 1);
-    if (startAts.length === 0) {
-        throw new Error(`[setup] Resource(id=${activeResource.id})에서 예약 가능한 slot을 찾지 못했습니다.`);
-    }
-    const startAt = startAts[0];
-    const endAt = addMinutes(startAt, duration);
-
     // holder가 먼저 이 슬롯을 실제로 예약해서 "꽉 찬 상태"를 만든다. WaitingQueueService는 이
     // 상태가 아니면(자리가 비어 있으면) 409 WAITING_QUEUE_NOT_AVAILABLE로 진입 자체를 거부한다.
-    const holderReservationRes = http.post(
-        `${BASE_URL}/api/reservations`,
-        JSON.stringify({ resourceId: activeResource.id, startAt, duration }),
-        { headers: jsonHeaders(holderToken) }
-    );
-    if (holderReservationRes.status !== 201) {
-        throw new Error(
-            `[setup] holder의 선점 예약 생성 실패 (status=${holderReservationRes.status}): ${holderReservationRes.body}`
-        );
-    }
-    const holderReservationId = holderReservationRes.json('reservationId');
-    if (!holderReservationId) {
-        throw new Error(`[setup] holder 예약 응답에 reservationId가 없습니다: ${holderReservationRes.body}`);
-    }
+    // availability=true였던 후보도 대기열 승급 우선권 등으로 실제 예약 생성은 거부될 수 있으므로,
+    // 단일 후보만 시도하지 않고 findAndReserveHolderSlot이 여러 후보를 순서대로 시도한다.
+    const { startAt, holderReservationId } = findAndReserveHolderSlot(holderToken, activeResource.id, duration);
+    const endAt = addMinutes(startAt, duration);
 
     console.log(
         `[setup] 완료 - resourceId=${activeResource.id}, resourceName=${activeResource.name}, ` +
