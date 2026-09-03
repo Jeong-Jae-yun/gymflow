@@ -1,0 +1,36 @@
+services:
+  prometheus:
+    image: prom/prometheus
+    container_name: gymflow-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./backend/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - gymflow-prod-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana
+    container_name: gymflow-grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./backend/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./backend/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - gymflow-prod-network
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  gymflow-prod-network:
+    external: true
+    name: gymflow_gymflow-prod-network
