@@ -630,7 +630,7 @@
             "uid": "efww8t76mqyo0b"
           },
           "editorMode": "code",
-          "expr": "100 *\r\nsum(rate(gymflow_reservation_conflict_total[5m]))\r\n/\r\n(\r\n  sum(rate(gymflow_reservation_total[5m]))\r\n  +\r\n  sum(rate(gymflow_reservation_conflict_total[5m]))\r\n  +\r\n  sum(rate(gymflow_reservation_failed_total[5m]))\r\n)",
+          "expr": "100 *\r\nsum(rate(gymflow_reservation_conflict_total[5m]))\r\n/\r\nclamp_min(\r\n  (\r\n    sum(rate(gymflow_reservation_created_total[5m]))\r\n    +\r\n    sum(rate(gymflow_reservation_conflict_total[5m]))\r\n    +\r\n    sum(rate(gymflow_reservation_failed_total[5m]))\r\n  ),\r\n  1e-9\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -695,7 +695,8 @@
                 "value": 80
               }
             ]
-          }
+          },
+          "unit": "ops"
         }
       },
       "gridPos": {
@@ -726,8 +727,8 @@
             "uid": "efww8t76mqyo0b"
           },
           "editorMode": "code",
-          "expr": "gymflow_lock_acquired_total{lock_name=\"reservation-slot\"}",
-          "legendFormat": "Acquired",
+          "expr": "sum by (lock_name) (rate(gymflow_lock_acquired_total[5m]))",
+          "legendFormat": "{{lock_name}} - acquired",
           "range": true,
           "refId": "A"
         },
@@ -737,9 +738,9 @@
             "uid": "efww8t76mqyo0b"
           },
           "editorMode": "code",
-          "expr": "gymflow_lock_failed_total{lock_name=\"reservation-slot\"}",
+          "expr": "sum by (lock_name) (rate(gymflow_lock_failed_total[5m]))",
           "instant": false,
-          "legendFormat": "Failed",
+          "legendFormat": "{{lock_name}} - failed",
           "range": true,
           "refId": "B"
         }
