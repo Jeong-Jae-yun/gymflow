@@ -1,6 +1,8 @@
 package com.gymflow.domain.resource.domain.redis;
 
 import com.gymflow.TestcontainersConfiguration;
+import com.gymflow.global.metrics.LockMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,10 +37,14 @@ class ResourceAvailabilityLockRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     private ResourceAvailabilityLockRepository repository;
+    private LockMetrics lockMetrics;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
-        repository = new ResourceAvailabilityLockRepository(redisTemplate);
+        meterRegistry = new SimpleMeterRegistry();
+        lockMetrics = new LockMetrics(meterRegistry);
+        repository = new ResourceAvailabilityLockRepository(redisTemplate, lockMetrics);
     }
 
     @AfterEach
@@ -56,6 +62,19 @@ class ResourceAvailabilityLockRepositoryTest {
     }
 
     @Test
+    @DisplayName("Lock 획득에 성공하면 gymflow_lock_acquired_total(lock_name=resource-availability)이 기록된다")
+    void tryLock_OnSuccess_ShouldRecordAcquiredMetricWithResourceAvailabilityLockName() {
+        repository.tryLock(RESOURCE_ID);
+
+        assertThat(meterRegistry.get("gymflow_lock_acquired_total")
+                .tag("lock_name", "resource-availability").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("gymflow_lock_failed_total")
+                .tag("lock_name", "resource-availability").counter().count()).isEqualTo(0.0);
+        assertThat(meterRegistry.get("gymflow_lock_wait_seconds")
+                .tag("lock_name", "resource-availability").timer().count()).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("동일 Resource에 대한 재획득을 시도하면 실패한다")
     void tryLock_WithSameResource_ShouldFailOnSecondAttempt() {
         Optional<String> first = repository.tryLock(RESOURCE_ID);
@@ -63,6 +82,20 @@ class ResourceAvailabilityLockRepositoryTest {
 
         assertThat(first).isPresent();
         assertThat(second).isEmpty();
+    }
+
+    @Test
+    @DisplayName("동일 Resource에 대한 재획득이 실패하면 gymflow_lock_failed_total(lock_name=resource-availability)이 기록된다")
+    void tryLock_WhenSecondAttemptFails_ShouldRecordFailedMetricWithResourceAvailabilityLockName() {
+        repository.tryLock(RESOURCE_ID);
+        repository.tryLock(RESOURCE_ID);
+
+        assertThat(meterRegistry.get("gymflow_lock_acquired_total")
+                .tag("lock_name", "resource-availability").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("gymflow_lock_failed_total")
+                .tag("lock_name", "resource-availability").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("gymflow_lock_wait_seconds")
+                .tag("lock_name", "resource-availability").timer().count()).isEqualTo(2L);
     }
 
     @Test
@@ -101,7 +134,7 @@ class ResourceAvailabilityLockRepositoryTest {
     @DisplayName("TTL이 지나면 Lock이 자동으로 해제되어 다시 획득할 수 있다")
     void tryLock_AfterTtlExpires_ShouldSucceedAgain() throws InterruptedException {
         ResourceAvailabilityLockRepository shortTtlRepository =
-                new ResourceAvailabilityLockRepository(redisTemplate, Duration.ofMillis(300));
+                new ResourceAvailabilityLockRepository(redisTemplate, Duration.ofMillis(300), lockMetrics);
         Optional<String> first = shortTtlRepository.tryLock(RESOURCE_ID);
         assertThat(first).isPresent();
 
@@ -120,11 +153,13 @@ class ResourceAvailabilityLockRepositoryTest {
         doThrow(new RedisConnectionFailureException("연결 실패"))
                 .when(spyValueOperations).setIfAbsent(anyString(), anyString(), any(Duration.class));
         when(spyTemplate.opsForValue()).thenReturn(spyValueOperations);
-        ResourceAvailabilityLockRepository faultyRepository = new ResourceAvailabilityLockRepository(spyTemplate);
+        ResourceAvailabilityLockRepository faultyRepository = new ResourceAvailabilityLockRepository(spyTemplate, lockMetrics);
 
         Optional<String> token = faultyRepository.tryLock(RESOURCE_ID);
 
         assertThat(token).isEmpty();
+        assertThat(meterRegistry.get("gymflow_lock_failed_total")
+                .tag("lock_name", "resource-availability").counter().count()).isEqualTo(1.0);
     }
 
     @Test
@@ -135,7 +170,7 @@ class ResourceAvailabilityLockRepositoryTest {
         StringRedisTemplate spyTemplate = spy(redisTemplate);
         doThrow(new RedisConnectionFailureException("연결 실패"))
                 .when(spyTemplate).execute(any(DefaultRedisScript.class), anyList(), any());
-        ResourceAvailabilityLockRepository faultyRepository = new ResourceAvailabilityLockRepository(spyTemplate);
+        ResourceAvailabilityLockRepository faultyRepository = new ResourceAvailabilityLockRepository(spyTemplate, lockMetrics);
 
         assertThatCode(() -> faultyRepository.unlock(RESOURCE_ID, token))
                 .doesNotThrowAnyException();

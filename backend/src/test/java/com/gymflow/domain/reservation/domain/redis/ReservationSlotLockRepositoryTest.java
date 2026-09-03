@@ -1,6 +1,7 @@
 package com.gymflow.domain.reservation.domain.redis;
 
 import com.gymflow.TestcontainersConfiguration;
+import com.gymflow.global.metrics.LockMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +37,7 @@ class ReservationSlotLockRepositoryTest {
     private StringRedisTemplate redisTemplate;
 
     private ReservationSlotLockRepository repository;
-    private ReservationLockMetrics lockMetrics;
+    private LockMetrics lockMetrics;
     private SimpleMeterRegistry meterRegistry;
 
     private static LocalDateTime at(int hour, int minute) {
@@ -46,7 +47,7 @@ class ReservationSlotLockRepositoryTest {
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
-        lockMetrics = new ReservationLockMetrics(meterRegistry);
+        lockMetrics = new LockMetrics(meterRegistry);
         repository = new ReservationSlotLockRepository(redisTemplate, lockMetrics);
     }
 
