@@ -11,7 +11,7 @@
 | Document | Project Overview |
 | Version | v1.0             |
 | Author | 정재윤              |
-| Last Updated | 2026-08-27       |
+| Last Updated | 2026-09-04       |
 ---
 
 # 1. 프로젝트 소개
@@ -24,7 +24,7 @@ GymFlow는 헬스장의 운동기구 및 다양한 시설(Resource)을 실시간
 
 사용자는 운동기구의 현재 상태를 실시간으로 확인하고 예약, 체크인, 체크아웃, 예약 연장, 대기열 등록 등을 수행할 수 있으며, 관리자는 리소스 관리와 운영 정책을 설정할 수 있다.
 
-Redis 기반의 분산 락과 WebSocket을 활용하여 동시 예약 문제를 해결하고 실시간 상태 변경을 모든 사용자에게 즉시 전달한다.
+Redis 기반의 분산 락을 활용하여 동시 예약 문제를 해결하고, 대기열 승급(Promotion) 발생 시 Redis Pub/Sub와 WebSocket(STOMP)을 통해 해당 사용자에게 실시간으로 알림을 전달한다.
 
 또한 Prometheus와 Grafana를 통해 서비스의 운영 상태를 모니터링하며, GitHub Actions와 AWS를 이용한 CI/CD 환경을 구축하여 실제 서비스와 유사한 운영 환경을 경험하는 것을 목표로 한다.
 
@@ -47,8 +47,8 @@ GymFlow는 단순 CRUD 프로젝트가 아니라 실제 서비스를 개발한�
 ## Realtime
 
 - WebSocket(STOMP)
-- 실시간 예약 상태 동기화
-- 실시간 알림
+- 대기열 승급(Promotion) 실시간 알림
+- Redis Pub/Sub 기반 이벤트 전파
 
 ---
 
@@ -97,13 +97,13 @@ GymFlow는 다음 다섯 가지 문제를 해결하는 것을 목표로 한다.
 
 ## 1. 동시 예약 문제 해결
 
-여러 사용자가 동일한 운동기구를 동시에 예약하는 상황에서 중복 예약이 발생하지 않도록 Redis Distributed Lock을 이용하여 예약의 원자성을 보장한다. Lock은 요청의 정확한 시작/종료 시각이 아니라 Resource + 절대 5분 grid 슬롯 단위로 획득한다. 정확한 시각 문자열을 그대로 Lock Key로 쓰면 겹치는 시간대라도 시작/종료 시각이 조금만 달라도 서로 다른 Key가 되어 직렬화되지 않는 한계가 있어, 겹치는 두 요청이 항상 최소 하나의 슬롯을 공유하도록 이 방식을 사용한다.
+여러 사용자가 동일한 Resource를 동시에 예약하는 상황에서 중복 예약이 발생하지 않도록 동일 시간대 중복 예약을 방지하고, 겹치는 시간 구간에 대한 동시성 제어를 Redis 분산 락과 DB 재검증으로 보장한다. 상세한 Lock 종류/키 구조/트랜잭션 경계는 [04_Concurrency_Control.md](./04_Concurrency_Control.md)에서 다룬다.
 
 ---
 
 ## 2. 실시간 상태 제공
 
-예약, 체크인, 체크아웃, 예약 취소 등의 이벤트가 발생하면 WebSocket을 이용하여 모든 사용자에게 실시간으로 변경 사항을 전달한다.
+예약이 불가능해 대기열에 등록한 사용자는, 앞선 예약이 취소/노쇼되어 승급(Promotion) 기회가 생기면 Redis Pub/Sub와 WebSocket(STOMP)을 통해 실시간으로 알림을 받는다. GymFlow에서 WebSocket으로 전파되는 이벤트는 이 대기열 승급 알림이 유일하다. 상세 흐름은 [05_Redis_Realtime.md](./05_Redis_Realtime.md)에서 다룬다.
 
 ---
 
@@ -119,7 +119,7 @@ Redis TTL을 이용하여 별도의 Polling 없이 자동 만료를 처리한다
 
 예약 생성 성공 횟수를 기반으로 인기 순위를 제공한다. UsageHistory(실제 사용 완료 기록, MySQL Source of Truth) 기반 통계와는 별개의 지표다.
 
-Redis Sorted Set을 활용하여 실시간 랭킹을 관리하며, `GET /api/resources/rankings`(TOP N)와 `GET /api/resources/{resourceId}/ranking`(특정 Resource)로 조회한다. Redis ZSET에는 Resource 상태와 무관하게 score가 유지되지만, 사용자 노출 Ranking은 ACTIVE Resource만 필터링하고 그 안에서 1부터 시작하는 연속 순위를 다시 매긴다. Redis 장애 시 Fail-Open으로 처리한다(TOP N은 빈 목록, 특정 Resource는 rank=null/score=0).
+Redis Sorted Set을 활용하여 실시간 랭킹을 관리하며, `GET /api/resources/rankings`(TOP N)와 `GET /api/resources/{resourceId}/ranking`(특정 Resource)로 조회한다. 랭킹 산출 방식과 Redis 장애 시 처리 전략은 [05_Redis_Realtime.md](./05_Redis_Realtime.md)에서 다룬다.
 
 ---
 
@@ -232,10 +232,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 ### 실시간
 
-- 예약 상태 변경
-- 체크인 상태
-- 대기열 승급
-- 실시간 알림
+- 대기열 승급(Promotion) 실시간 알림
 
 ---
 
@@ -278,7 +275,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 | FR-010 | 대기열 등록이 가능하다. |
 | FR-011 | 예약 취소 시 대기열이 자동 승급된다. |
 | FR-012 | 관리자는 Resource를 관리한다. |
-| FR-013 | 예약 상태는 실시간으로 동기화된다. |
+| FR-013 | 대기열 승급 시 해당 사용자에게 실시간으로 알림이 전달된다. |
 | FR-014 | 자주 조회되는 데이터는 Redis Cache를 사용한다. |
 | FR-015 | 동시 예약은 Redis Distributed Lock으로 제어한다. |
 | FR-016 | 인기 Resource Ranking을 제공한다. |
@@ -287,10 +284,12 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 # 7. 비기능 요구사항
 
-## 성능
+## 성능 (초기 비기능 목표)
 
 - 예약 API 평균 응답 시간 200ms 이하
 - Resource 조회 API 평균 응답 시간 100ms 이하
+
+위 수치는 설계 초기에 설정한 목표치이며, 실제 k6 부하 테스트 측정 결과는 [07_Test_Performance.md](./07_Test_Performance.md)에서 별도로 다룬다.
 
 ---
 
@@ -302,7 +301,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 ## 실시간성
 
-- 상태 변경 이벤트는 즉시 모든 사용자에게 전달된다.
+- 대기열 승급 이벤트는 해당 사용자에게 즉시 전달된다.
 
 ---
 
@@ -314,13 +313,7 @@ Reservation은 Resource만 참조하기 때문에 새로운 Resource가 추가�
 
 ## 운영성
 
-Prometheus와 Grafana를 이용하여 다음 메트릭을 확인할 수 있다.
-
-- API 응답시간
-- 예약 수
-- 체크인율
-- Resource 사용률
-- JVM 상태
+Prometheus와 Grafana를 이용하여 API 응답시간, 예약/락/대기열 지표, JVM/DB Connection Pool 상태 등을 모니터링한다. 상세 Dashboard 구성은 [06_Deployment_Monitoring.md](./06_Deployment_Monitoring.md)에서 다룬다.
 
 ---
 
@@ -346,10 +339,6 @@ Resource 조회
 ↓
 
 예약 성공
-
-↓
-
-모든 사용자에게 실시간 상태 전파
 ```
 
 ---
@@ -455,8 +444,7 @@ NO_SHOW 처리
 ## 예약
 
 - 동일 Resource는 동일 시간에 하나의 예약만 가능하다.
-- 예약은 운영시간 내에서만 가능하다.
-- 점검 상태의 Resource는 예약할 수 없다.
+- 점검(MAINTENANCE) 또는 비활성(INACTIVE) 상태의 Resource는 예약할 수 없다.
 
 ---
 
@@ -494,7 +482,7 @@ NO_SHOW 처리
 
 - Resource 중심의 확장 가능한 도메인 설계
 - Redis 기반 분산 락을 활용한 동시성 제어
-- WebSocket 기반 실시간 예약 상태 동기화
+- Redis Pub/Sub + WebSocket(STOMP) 기반 대기열 승급 실시간 알림
 - Redis TTL을 활용한 자동 NO_SHOW 처리
 - Redis Sorted Set 기반 인기 Resource 랭킹
 - Prometheus + Grafana 기반 운영 모니터링
