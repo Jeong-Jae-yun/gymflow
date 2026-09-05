@@ -109,7 +109,7 @@ GymFlow는 8개의 Entity(모두 Aggregate Root, `ReservationPolicy`만 `Resourc
 ## 6. DB / ERD
 
 ![ERD.png](docs/images/ERD.png)
-
+- DB 명세: [Notion DB 명세서](https://app.notion.com/p/DB-3af600a70787801db793ec180670d631?source=copy_link)
 
 컬럼 단위 상세 [docs/02_Domain_Design.md](docs/02_Domain_Design.md)
 
