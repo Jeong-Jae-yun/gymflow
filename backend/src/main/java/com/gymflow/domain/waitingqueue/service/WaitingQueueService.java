@@ -132,9 +132,6 @@ public class WaitingQueueService {
         Long resourceId = waitingQueue.getResource().getId();
         LocalDateTime startAt = waitingQueue.getStartAt();
         try {
-            // INCR(sequence) + ZADD + ZRANK가 하나의 Lua 스크립트로 원자 실행되므로, 이 사이에
-            // 다른 사용자의 등록이 끼어들어 rank가 중복되는 일이 없다. score는 createdAt이 아니라
-            // 이 시퀀스 값이라 밀리초 동률로 인한 순서 불안정성도 없다.
             return waitingQueueRedisRepository.addAndGetRank(waitingQueue.getId(), resourceId, startAt)
                     .map(rank -> rank + 1)
                     .orElse(null);
